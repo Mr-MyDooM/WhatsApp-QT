@@ -95,7 +95,7 @@ cargo run
 
 ### 🐧 Linux — First-Class Citizen
 This app is developed and tested primarily on Linux (because that's where real computing happens).  
-Tested on openSUSE Tumbleweed + KDE, but should work on most modern distros.  
+Tested on openSUSE Slowroll/Tumbleweed + KDE, but should work on most modern distros.  
 If you're running Linux, you're in the sweet spot.  
 Expect full feature support and the least surprises.
 
@@ -106,6 +106,8 @@ Support is "best effort" — patches welcome, rants optional.
 ### 🍏 macOS — Who Knows
 macOS support is in the "maybe one day if I borrow a MacBook" phase.  
 If you're adventurous and want to try it, PRs are open.
+
+---
 
 > ⚠️ **Note from the dev:**  
 > I'm a SRE first, coding my way into developerhood.  
@@ -122,5 +124,6 @@ All help welcome — especially if you're new to Rust or QML.
 
 ## 🧙 Author
 
-Made with ❤️ by M.J (`~~::Mr.MyDooM::~~`)
+Made with ❤️ by M.J (`~~::Mr.MyDooM::~~`)  
+
 Inspired by SRE-style tools, built for fun and learning.
