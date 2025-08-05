@@ -1,7 +1,7 @@
 
 # WhatsApp-QT
 
-🧙 A simple, privacy-friendly WhatsApp-like desktop client built in Rust + QML (Qt), inspired by ZapZap.  
+🧙 A simple, privacy-friendly WhatsApp-like desktop client built in Rust + QML (Qt), inspired by [`ZapZap`](https://github.com/rafatosta/zapzap).  
 Designed to be cross-platform (Linux & Windows) and lightweight — perfect for system tray usage, theming, and tabbed chat-like browsing.
 
 ---

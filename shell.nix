@@ -2,22 +2,17 @@
 
 pkgs.mkShell {
   buildInputs = with pkgs; [
-    # Qt6 packages only - for your Rust Qt application
-    qt6.qtbase              # Core Qt libraries
-    qt6.qtdeclarative       # QML support
-    qt6.qtwebengine         # Web browser functionality
-    qt6.qttools             # Provides rcc, moc, and other Qt tools
-
+    qt6.qtbase
+    qt6.qtdeclarative
+    qt6.qtwebengine
+    qt6.qttools
     # Build tools needed for C++ compilation (Qt resources)
-    cmake                   # Sometimes needed for C++ compilation
-    pkg-config              # For finding libraries
-    gcc                     # C++ compiler for Qt resource compilation
+    cmake
+    pkg-config
+    gcc
   ];
 
   shellHook = ''
-    echo "🚀 Setting up Qt6 development environment..."
-    echo "📦 Using system Rust toolchain and Cargo"
-
     # Add Qt tools to PATH - this is the KEY fix for rcc!
     export PATH="${pkgs.qt6.qtbase}/libexec:$PATH"
     export PATH="${pkgs.qt6.qttools}/bin:$PATH"
@@ -27,7 +22,6 @@ pkgs.mkShell {
     export QML2_IMPORT_PATH="${pkgs.qt6.qtdeclarative}/lib/qt-6/qml:$QML2_IMPORT_PATH"
 
     # Verify system Rust toolchain
-    echo "🦀 Checking system Rust toolchain..."
     if command -v cargo >/dev/null 2>&1; then
       echo "✅ System Cargo is available: $(cargo --version)"
     else
@@ -56,11 +50,5 @@ pkgs.mkShell {
       echo "✅ Meta-Object Compiler (moc) is available"
     fi
 
-    echo ""
-    echo "✅ Qt6 environment ready!"
-    echo "🛠️  You can now run:"
-    echo "   • cargo build --release    (uses system cargo)"
-    echo "   • cargo run               (uses system cargo)"
-    echo ""
   '';
 }
