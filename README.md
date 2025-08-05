@@ -108,7 +108,7 @@ macOS support is in the "maybe one day if I borrow a MacBook" phase.
 If you're adventurous and want to try it, PRs are open.
 
 > ⚠️ **Note from the dev:**  
-> I'm a sysadmin first, coding my way into developerhood.  
+> I'm a SRE first, coding my way into developerhood.  
 > Expect stability on Linux, and some occasional chaos elsewhere.
  
 
@@ -123,4 +123,4 @@ All help welcome — especially if you're new to Rust or QML.
 ## 🧙 Author
 
 Made with ❤️ by M.J (`~~::Mr.MyDooM::~~`)
-Inspired by SysAdmin-style tools, built for fun and learning.
+Inspired by SRE-style tools, built for fun and learning.
