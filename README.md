@@ -1,7 +1,7 @@
 
 # WhatsApp-QT
 
-🧙 A simple, privacy-friendly WhatsApp-like desktop client built in Rust + QML (Qt), inspired by [`ZapZap`](https://github.com/rafatosta/zapzap).  
+🧙 A Linux first simple, privacy-friendly WhatsApp-like desktop client built in Rust + QML (Qt), inspired by [ZapZap](https://github.com/rafatosta/zapzap).  
 Designed to be cross-platform (Linux & Windows) and lightweight — perfect for system tray usage, theming, and tabbed chat-like browsing.
 
 ---
@@ -14,7 +14,7 @@ Designed to be cross-platform (Linux & Windows) and lightweight — perfect for 
 - 🎨 Light/Dark/system themes
 - 🔔 System tray support (GTK-based)
 - 💾 Persistent settings (saved to `~/.config/WhatsApp-QT`)
-- 🔧 Designed for Linux (tested on openSUSE Tumbleweed + Plasma), Windows coming soon
+- 🔧 Designed for Linux (tested on openSUSE TumbleWeed/SlowRoll + Plasma), Windows coming soon
 
 ---
 
@@ -73,10 +73,9 @@ cargo run
 
 | Issue | Fix |
 |------|-----|
-| `GTK has not been initialized` | Add `gtk::init()` before tray icon code |
 | `settings` borrow/move panic | Avoid using `.clone()` inside `tokio::spawn`, or switch to sync I/O |
 | Tray icon not showing | Ensure `gtk3` is installed and tray icon path is correct |
-| GUI not launching | Ensure Qt5 dev packages are installed (`libqt5-*`) |
+| GUI not launching | Ensure Qt dev packages are installed (`libqt5-*`) |
 
 ---
 
@@ -85,13 +84,35 @@ cargo run
 - [x] Theme toggling
 - [x] Tray integration
 - [x] Save user settings
-- [ ] Save + restore tabs
-- [ ] Multi-account support
+- [X] Save + restore tabs
+- [X] Multi-account support
 - [ ] Windows support
 - [ ] Flatpak build
 
 ---
 
+## 🖥️ Platform Support
+
+### 🐧 Linux — First-Class Citizen
+This app is developed and tested primarily on Linux (because that's where real computing happens).  
+Tested on openSUSE Tumbleweed + KDE, but should work on most modern distros.  
+If you're running Linux, you're in the sweet spot.  
+Expect full feature support and the least surprises.
+
+### 🪟 Windows — Works (Mostly)
+Basic features run fine, though some quirks may exist.  
+Support is "best effort" — patches welcome, rants optional.
+
+### 🍏 macOS — Who Knows
+macOS support is in the "maybe one day if I borrow a MacBook" phase.  
+If you're adventurous and want to try it, PRs are open.
+
+> ⚠️ **Note from the dev:**  
+> I'm a sysadmin first, coding my way into developerhood.  
+> Expect stability on Linux, and some occasional chaos elsewhere.
+ 
+
+---
 ## 🤝 Contributing
 
 Want to help make this better? Open an issue or submit a PR!
@@ -101,5 +122,5 @@ All help welcome — especially if you're new to Rust or QML.
 
 ## 🧙 Author
 
-Made with ❤️ by M.J (`~~::Mr.MyDooM::~~`)  
-Inspired by sysadmin-style tools, built for fun and learning.
+Made with ❤️ by M.J (`~~::Mr.MyDooM::~~`)
+Inspired by SysAdmin-style tools, built for fun and learning.
