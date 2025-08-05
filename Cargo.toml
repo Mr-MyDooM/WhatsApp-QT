@@ -1,0 +1,59 @@
+[package]
+name = "WhatsApp-QT"
+version = "0.1.0"
+edition = "2024"
+authors = ["MJ <mj@LocalHost.Com>"]
+description = "WhatsApp and telegram messaging in rust using QT"
+license = "MIT"
+repository = "https://github.com/mr.mydoom/whatsapp-qt"
+homepage = "https://mr.mydoom.github.com"
+documentation = "https://github.com/mr.mydoom/whatsapp-qt"
+keywords = ["rust", "qt", "whatsapp"]
+categories = ["gui-utilities", "messaging-tools"]
+readme = "README.md"
+
+[dependencies]
+qmetaobject = "0.2"
+cstr = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+dirs = "4.0"
+cxx-qt = "0.7"
+rand = "0.9.2"
+tokio = { version = "1.46.1", features = ["full"] }
+chrono = "0.4.41"
+dbus = "0.9.7"
+futures = "0.3.31"
+blocking = "1.6.2"
+notify-rust = "4.0"
+winrt-notification = "0.5"
+cpp_build = "0.5"
+tray-item = "0.6.0"
+reqwest = { version = "0.11", features = ["json"] }
+secrecy = "0.8"
+rpassword = "7.0"
+
+
+[build-dependencies]
+# For embedding QML resources if needed
+cpp_build = "0.5"
+
+[features]
+default = []
+embedded-resources = []
+
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 256
+strip = "debuginfo"
+#debuginfo = 0
+panic = "abort"
+
+#[target.x86_64-pc-windows-gnu]
+#linker = "x86_64-w64-mingw32-gcc"
+#[target.aarch64-unknown-linux-gnu]
+#linker = "aarch64-unknown-linux-gnu-gcc"
+#[target.x86_64-unknown-linux-musl]
+#linker = "x86_64-linux-musl-gcc"

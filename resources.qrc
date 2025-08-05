@@ -1,0 +1,10 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/qml">
+        <file>qml/main.qml</file>
+        <file>qml/components/Sidebar.qml</file>
+        <file>qml/components/WebTab.qml</file>
+        <file>qml/components/SettingsDialog.qml</file>
+        <file>qml/styles/AppStyle.qml</file>
+    </qresource>
+</RCC>
