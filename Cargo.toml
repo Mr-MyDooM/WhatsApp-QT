@@ -1,7 +1,7 @@
 [package]
 name = "WhatsApp-QT"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 authors = ["MJ <mj@LocalHost.Com>"]
 description = "WhatsApp and telegram messaging in rust using QT"
 license = "MIT"
@@ -19,8 +19,17 @@ dirs = "4.0"
 # Qt6 bindings. cxx-qt replaced qmetaobject (which is Qt5-only) so that the Qt6-only
 # QML APIs the frontend already uses (`import QtCore`, versionless QtQuick.Dialogs)
 # actually resolve.
+#
+# `cxx` is pinned because cxx-qt 0.7.3 was tested against cxx ~1.0.144; a newer cxx
+# compiles fine on its own but its "cxxbridge1$N$..." ABI version tag (baked into
+# every generated symbol name) must match the tag `cxx-gen` bakes into the C++ side
+# it generates in build.rs. Bumping one without the other links with undefined
+# symbols like `_cxxbridge1$199$AppController$theme` (verified on this machine: the
+# official cxx-qt "cargo_without_cmake" example reproduces the identical failure
+# with an unpinned cxx-gen, and pinning both to the same patch fixes it).
+cxx = "=1.0.144"
 cxx-qt = "0.7"
-cxx-qt-lib = { version = "0.7", features = ["qt_full"] }
+cxx-qt-lib = { version = "0.7", features = ["qt_full", "link_qt_object_files"] }
 rand = "0.9.2"
 tokio = { version = "1.46.1", features = ["full"] }
 chrono = "0.4.41"
@@ -40,6 +49,12 @@ winrt-notification = "0.5"
 # Generates the C++ side of the cxx-qt bridge, compiles the QML module into the
 # binary's Qt resources, and links the Qt libraries.
 cxx-qt-build = { version = "0.7", features = ["link_qt_object_files"] }
+# Pinned to match `cxx = "=1.0.144"` above (see the comment there) — cxx-qt-build
+# uses this to generate the C++ side of the bridge, and its patch version must track
+# cxx's or the generated symbol ABI tags mismatch at link time. Declared explicitly
+# (rather than left to Cargo.lock) so a routine `cargo update` can't silently drift
+# it out of sync again.
+cxx-gen = "=0.7.144"
 
 [features]
 default = []

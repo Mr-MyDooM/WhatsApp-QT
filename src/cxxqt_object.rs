@@ -64,7 +64,7 @@ pub mod qobject {
         fn whatsappqt_webengine_init();
     }
 
-    unsafe extern "RustQt" {
+    extern "RustQt" {
         /// Registered into the `AppController` QML module (see build.rs), which is what
         /// makes the existing bare `import AppController` + `AppController { ... }` work.
         ///
