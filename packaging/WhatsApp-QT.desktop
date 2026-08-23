@@ -1,10 +1,12 @@
 [Desktop Entry]
 Name=WhatsApp QT
 Comment=WhatsApp desktop client for Linux
-Exec=WhatsApp-QT
+# %u passes a whatsapp:// URL through as argv[1], which is what main() parses.
+Exec=WhatsApp-QT %u
 Icon=io.github.mrdoom.WhatsAppQT
 Type=Application
 Categories=Network;InstantMessaging;
+MimeType=x-scheme-handler/whatsapp;
 Keywords=WhatsApp;messaging;chat;
 StartupNotify=true
 StartupWMClass=WhatsApp-QT

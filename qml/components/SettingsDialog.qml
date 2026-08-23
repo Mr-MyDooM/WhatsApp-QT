@@ -144,6 +144,32 @@ Dialog {
                     }
 
                     RowLayout {
+                        Label {
+                            text: "Custom sound:"
+                        }
+                        TextField {
+                            id: soundPathField
+                            Layout.fillWidth: true
+                            // Rust is the source of truth; the picker writes through
+                            // it rather than into this field.
+                            text: controller.notification_sound_path
+                            placeholderText: "System default"
+                            readOnly: true
+                            enabled: soundEnabledCheck.checked
+                        }
+                        Button {
+                            text: "Browse..."
+                            enabled: soundEnabledCheck.checked
+                            onClicked: soundFileDialog.open()
+                        }
+                        Button {
+                            text: "Clear"
+                            enabled: soundEnabledCheck.checked && soundPathField.text.length > 0
+                            onClicked: controller.set_notification_sound_path("")
+                        }
+                    }
+
+                    RowLayout {
                         Button {
                             text: "Test Notification"
                             enabled: enableNotificationsCheck.checked
@@ -186,6 +212,22 @@ Dialog {
                                 controller.set_start_minimized(checked);
                             else
                                 console.warn("AppController.set_start_minimized missing; setting not persisted");
+                        }
+                    }
+
+                    // Unlike its neighbours this one stays bound to the Rust
+                    // property: set_autostart_enabled can fail (OS registration),
+                    // in which case the value does not change and the box must
+                    // snap back rather than keep showing the click.
+                    CheckBox {
+                        id: autostartCheck
+                        text: "Start on login"
+                        checked: controller.autostart_enabled
+                        onClicked: {
+                            controller.set_autostart_enabled(!controller.autostart_enabled);
+                            checked = Qt.binding(function () {
+                                return controller.autostart_enabled;
+                            });
                         }
                     }
 
@@ -238,6 +280,25 @@ Dialog {
         }
     }
 
+
+    FileDialog {
+        id: soundFileDialog
+        title: "Choose Notification Sound"
+        nameFilters: ["Audio files (*.wav *.mp3 *.ogg *.oga *.flac *.aiff *.m4a)", "All files (*)"]
+        currentFolder: {
+            var music = StandardPaths.standardLocations(StandardPaths.MusicLocation);
+            return music.length > 0 ? music[0] : StandardPaths.writableLocation(StandardPaths.HomeLocation);
+        }
+        onAccepted: {
+            // ponytail: a native file picker cannot return garbage, so a
+            // null/empty check is the whole validation this needs.
+            if (!selectedFile)
+                return;
+            var picked = selectedFile.toString().replace("file://", "");
+            if (picked.length > 0)
+                controller.set_notification_sound_path(picked);
+        }
+    }
 
     Connections {
 

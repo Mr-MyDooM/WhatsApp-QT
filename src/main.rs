@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+mod autostart;
 mod cxxqt_object;
 mod notification;
 
@@ -33,8 +34,66 @@ pub fn find_data_dir() -> PathBuf {
     PathBuf::from(".")
 }
 
+/// A `whatsapp:` / `https://wa.me/...` URL the OS passed on the command line, if any.
+/// Filled once before the QML loads; QML pulls it via
+/// `AppController.take_pending_deep_link()` and raises the window.
+static PENDING_DEEP_LINK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// argv is how Linux and Windows deliver a registered URI scheme. macOS uses an
+/// Apple Event instead (see the deep-link note in CLAUDE.md).
+fn deep_link_from_args() -> Option<String> {
+    first_deep_link(std::env::args().skip(1))
+}
+
+fn first_deep_link(args: impl Iterator<Item = String>) -> Option<String> {
+    let mut args = args;
+    args.find(|a| {
+        a.starts_with("whatsapp:")
+            || a.starts_with("https://wa.me/")
+            || a.starts_with("http://wa.me/")
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_deep_link;
+
+    fn args(v: &[&str]) -> std::vec::IntoIter<String> {
+        v.iter().map(|s| s.to_string()).collect::<Vec<_>>().into_iter()
+    }
+
+    #[test]
+    fn recognises_both_deep_link_forms_and_ignores_other_args() {
+        assert_eq!(
+            first_deep_link(args(&["--flag", "whatsapp://send?phone=1"])),
+            Some("whatsapp://send?phone=1".to_string())
+        );
+        assert_eq!(
+            first_deep_link(args(&["https://wa.me/123"])),
+            Some("https://wa.me/123".to_string())
+        );
+        // Not a deep link: an unrelated https URL must not raise the window.
+        assert_eq!(first_deep_link(args(&["https://web.whatsapp.com"])), None);
+        assert_eq!(first_deep_link(args(&["--start-minimized"])), None);
+        assert_eq!(first_deep_link(args(&[])), None);
+    }
+}
+
+/// Takes (and clears) the pending deep link. Clearing means a raise happens once
+/// per delivery, not on every QML reload.
+pub fn take_pending_deep_link() -> Option<String> {
+    PENDING_DEEP_LINK.lock().ok()?.take()
+}
+
 fn main() {
     env_logger::init();
+
+    if let Some(url) = deep_link_from_args() {
+        log::info!("Deep link received on command line: {}", url);
+        if let Ok(mut slot) = PENDING_DEEP_LINK.lock() {
+            *slot = Some(url);
+        }
+    }
 
     // Before QGuiApplication, always. WebEngineView aborts otherwise.
     cxxqt_object::qobject::whatsappqt_webengine_init();

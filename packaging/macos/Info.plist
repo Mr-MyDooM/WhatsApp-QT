@@ -25,6 +25,23 @@
     <string>11.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <!-- Registers whatsapp:// with LaunchServices. NOTE: macOS delivers the URL as
+         an Apple Event (application:openURLs:), NOT as argv, and the Rust side only
+         reads argv - so this makes the app the handler but the URL itself is not
+         consumed yet. See CLAUDE.md > Packaging. -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>WhatsApp Link</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>whatsapp</string>
+            </array>
+        </dict>
+    </array>
     <!-- WhatsApp Web needs mic/camera for voice and video calls. -->
     <key>NSMicrophoneUsageDescription</key>
     <string>WhatsApp QT needs microphone access for voice and video calls.</string>

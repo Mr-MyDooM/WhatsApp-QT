@@ -5,7 +5,7 @@
 //! default (no `#[auto_cxx_name]` on the extern block), so what is written below is
 //! exactly what QML sees.
 
-use cxx_qt::CxxQtType;
+use cxx_qt::{CxxQtType, Threading};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -82,6 +82,8 @@ pub mod qobject {
         #[qproperty(bool, show_message_notifications, READ, WRITE = set_show_message_notifications, NOTIFY = show_message_notifications_changed)]
         #[qproperty(bool, show_call_notifications, READ, WRITE = set_show_call_notifications, NOTIFY = show_call_notifications_changed)]
         #[qproperty(bool, notification_sound_enabled, READ, WRITE = set_notification_sound_enabled, NOTIFY = notification_sound_enabled_changed)]
+        #[qproperty(QString, notification_sound_path, READ, WRITE = set_notification_sound_path, NOTIFY = notification_sound_path_changed)]
+        #[qproperty(bool, autostart_enabled, READ, WRITE = set_autostart_enabled, NOTIFY = autostart_enabled_changed)]
         #[qproperty(bool, show_sender, READ, WRITE = set_show_sender, NOTIFY = show_sender_changed)]
         #[qproperty(bool, clear_cache_on_exit, READ, WRITE = set_clear_cache_on_exit, NOTIFY = clear_cache_on_exit_changed)]
         #[qproperty(bool, start_minimized, READ, WRITE = set_start_minimized, NOTIFY = start_minimized_changed)]
@@ -117,6 +119,10 @@ pub mod qobject {
         fn show_call_notifications_changed(self: Pin<&mut AppController>);
         #[qsignal]
         fn notification_sound_enabled_changed(self: Pin<&mut AppController>);
+        #[qsignal]
+        fn notification_sound_path_changed(self: Pin<&mut AppController>);
+        #[qsignal]
+        fn autostart_enabled_changed(self: Pin<&mut AppController>);
         #[qsignal]
         fn show_sender_changed(self: Pin<&mut AppController>);
         #[qsignal]
@@ -160,6 +166,17 @@ pub mod qobject {
         #[qinvokable]
         fn set_notification_sound_enabled(self: Pin<&mut AppController>, enabled: bool);
         #[qinvokable]
+        fn set_notification_sound_path(self: Pin<&mut AppController>, path: QString);
+        #[qinvokable]
+        fn set_autostart_enabled(self: Pin<&mut AppController>, enabled: bool);
+        /// Mute notifications now and un-mute after `minutes`. Transient, not persisted.
+        #[qinvokable]
+        fn snooze_notifications(self: Pin<&mut AppController>, minutes: i32);
+        /// Returns a `whatsapp:`/`wa.me` URL the OS passed on the command line, or
+        /// an empty string. Consumed on first call.
+        #[qinvokable]
+        fn take_pending_deep_link(self: &AppController) -> QString;
+        #[qinvokable]
         fn set_show_sender(self: Pin<&mut AppController>, enabled: bool);
         #[qinvokable]
         fn set_clear_cache_on_exit(self: Pin<&mut AppController>, enabled: bool);
@@ -189,6 +206,11 @@ pub mod qobject {
         #[qinvokable]
         fn load_settings(self: Pin<&mut AppController>);
     }
+
+    // Needed by snooze_notifications(): the countdown runs on a plain std thread
+    // and has to hop back onto the Qt thread to touch the QObject.
+    // (cxx-qt rejects doc comments on trait impls inside the bridge.)
+    impl cxx_qt::Threading for AppController {}
 }
 
 use cxx_qt_lib::QString;
@@ -203,6 +225,8 @@ pub struct AppControllerRust {
     pub show_message_notifications: bool,
     pub show_call_notifications: bool,
     pub notification_sound_enabled: bool,
+    pub notification_sound_path: QString,
+    pub autostart_enabled: bool,
     pub show_sender: bool,
     pub clear_cache_on_exit: bool,
     pub start_minimized: bool,
@@ -217,6 +241,13 @@ pub struct AppControllerRust {
     pub css_cache: QString,
     pub notification_service: NotificationService,
     pub tabs: Vec<TabInfo>,
+    /// Bumped by every snooze_notifications() call. A finishing countdown only
+    /// un-mutes if it is still the newest one, so a second snooze started while
+    /// the first is running does not get cut short by it.
+    pub snooze_generation: std::sync::atomic::AtomicU64,
+    /// True while a snooze is muting notifications. Kept out of settings.json (see
+    /// save_settings): a snooze is transient, so a restart must come back unmuted.
+    pub snooze_active: bool,
 }
 
 impl Default for AppControllerRust {
@@ -229,6 +260,8 @@ impl Default for AppControllerRust {
             show_message_notifications: true,
             show_call_notifications: true,
             notification_sound_enabled: true,
+            notification_sound_path: QString::default(),
+            autostart_enabled: false,
             show_sender: true,
             clear_cache_on_exit: false,
             start_minimized: false,
@@ -243,19 +276,28 @@ impl Default for AppControllerRust {
             css_cache: QString::default(),
             notification_service: NotificationService::new(),
             tabs: Vec::new(),
+            snooze_generation: std::sync::atomic::AtomicU64::new(0),
+            snooze_active: false,
         }
     }
 }
 
 impl AppControllerRust {
-    fn update_notification_settings(&mut self) {
-        let settings = NotificationSettings {
+    /// The single place the notification-related properties are collected into a
+    /// `NotificationSettings`; both the live service and settings.json use it.
+    fn notification_settings(&self) -> NotificationSettings {
+        NotificationSettings {
             enabled: self.notifications_enabled,
             show_message_notifications: self.show_message_notifications,
             show_call_notifications: self.show_call_notifications,
             sound_enabled: self.notification_sound_enabled,
             show_sender: self.show_sender,
-        };
+            sound_path: self.notification_sound_path.to_string(),
+        }
+    }
+
+    fn update_notification_settings(&mut self) {
+        let settings = self.notification_settings();
         self.notification_service.update_settings(settings);
     }
 }
@@ -287,6 +329,9 @@ impl qobject::AppController {
     }
 
     pub fn set_notifications_enabled(mut self: Pin<&mut Self>, enabled: bool) {
+        // Any explicit toggle (including the snooze countdown's own un-mute, and the
+        // tray's "Unmute") ends the snooze, so the new value persists for real.
+        self.as_mut().rust_mut().snooze_active = false;
         self.as_mut().rust_mut().notifications_enabled = enabled;
         self.as_mut().notifications_enabled_changed();
         self.as_mut().rust_mut().update_notification_settings();
@@ -312,6 +357,88 @@ impl qobject::AppController {
         self.as_mut().notification_sound_enabled_changed();
         self.as_mut().rust_mut().update_notification_settings();
         self.as_mut().save_settings();
+    }
+
+    pub fn set_notification_sound_path(mut self: Pin<&mut Self>, path: QString) {
+        self.as_mut().rust_mut().notification_sound_path = path;
+        self.as_mut().notification_sound_path_changed();
+        self.as_mut().rust_mut().update_notification_settings();
+        self.as_mut().save_settings();
+    }
+
+    pub fn set_autostart_enabled(mut self: Pin<&mut Self>, enabled: bool) {
+        // Register with the OS first: if that fails the setting is a lie, so report
+        // it and leave the stored value alone rather than persisting a false claim.
+        if let Err(e) = crate::autostart::set_enabled(enabled) {
+            log::error!("Could not {} autostart: {}", if enabled { "enable" } else { "disable" }, e);
+            self.as_mut().save_failed(QString::from(&e));
+            // Re-notify so a QML binding snaps back to the unchanged value.
+            self.as_mut().autostart_enabled_changed();
+            return;
+        }
+        self.as_mut().rust_mut().autostart_enabled = enabled;
+        self.as_mut().autostart_enabled_changed();
+        self.as_mut().save_settings();
+    }
+
+    /// Mute notifications and schedule an un-mute. Not persisted: a snooze that
+    /// survived a restart would be a mute the user cannot see or explain.
+    pub fn snooze_notifications(mut self: Pin<&mut Self>, minutes: i32) {
+        use std::sync::atomic::Ordering;
+
+        if minutes <= 0 {
+            log::warn!("snooze_notifications({}) ignored: needs a positive duration", minutes);
+            return;
+        }
+        // Nothing to mute, and un-muting on expiry would silently override a
+        // deliberate "notifications off". This is also what makes save_settings'
+        // "persist enabled:true while snoozed" correct: a snooze only ever starts
+        // from the enabled state.
+        if !self.notifications_enabled {
+            log::info!("snooze_notifications ignored: notifications are already off");
+            return;
+        }
+
+        let generation = self
+            .rust()
+            .snooze_generation
+            .fetch_add(1, Ordering::SeqCst)
+            + 1;
+        // set_notifications_enabled() clears snooze_active and persists, so mark the
+        // snooze afterwards and re-save: the second write puts enabled:true back on
+        // disk while the live service stays muted.
+        self.as_mut().set_notifications_enabled(false);
+        self.as_mut().rust_mut().snooze_active = true;
+        self.as_mut().save_settings();
+        log::info!("Notifications snoozed for {} minute(s)", minutes);
+
+        let qt_thread = self.qt_thread();
+        let secs = (minutes as u64) * 60;
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(secs));
+            let queued = qt_thread.queue(move |mut controller: Pin<&mut Self>| {
+                // A newer snooze (or generation bump) means this one is stale.
+                if controller.rust().snooze_generation.load(Ordering::SeqCst) != generation {
+                    log::debug!("Stale snooze expiry ignored");
+                    return;
+                }
+                log::info!("Snooze expired, re-enabling notifications");
+                controller.as_mut().set_notifications_enabled(true);
+            });
+            if let Err(e) = queued {
+                log::error!("Could not re-enable notifications after snooze: {}", e);
+            }
+        });
+    }
+
+    pub fn take_pending_deep_link(&self) -> QString {
+        match crate::take_pending_deep_link() {
+            Some(url) => {
+                log::info!("Delivering deep link to QML: {}", url);
+                QString::from(&url)
+            }
+            None => QString::default(),
+        }
     }
 
     pub fn set_show_sender(mut self: Pin<&mut Self>, enabled: bool) {
@@ -402,17 +529,20 @@ impl qobject::AppController {
     }
 
     pub fn save_settings(mut self: Pin<&mut Self>) {
+        let mut notification_settings = self.rust().notification_settings();
+        // A snooze mutes the live service but must not be written to disk: quitting
+        // mid-snooze would otherwise come back permanently muted with nothing on
+        // screen explaining why.
+        if self.rust().snooze_active {
+            notification_settings.enabled = true;
+        }
+
         let settings = AppSettings {
             theme: self.theme.to_string(),
             download_path: self.download_path.to_string(),
             current_tab: self.current_tab,
-            notification_settings: NotificationSettings {
-                enabled: self.notifications_enabled,
-                show_message_notifications: self.show_message_notifications,
-                show_call_notifications: self.show_call_notifications,
-                sound_enabled: self.notification_sound_enabled,
-                show_sender: self.show_sender,
-            },
+            notification_settings,
+            autostart_enabled: self.autostart_enabled,
             clear_cache_on_exit: self.clear_cache_on_exit,
             start_minimized: self.start_minimized,
             close_to_tray: self.close_to_tray,
@@ -504,7 +634,9 @@ impl qobject::AppController {
             rust.show_message_notifications = s.notification_settings.show_message_notifications;
             rust.show_call_notifications = s.notification_settings.show_call_notifications;
             rust.notification_sound_enabled = s.notification_settings.sound_enabled;
+            rust.notification_sound_path = QString::from(&s.notification_settings.sound_path);
             rust.show_sender = s.notification_settings.show_sender;
+            rust.autostart_enabled = s.autostart_enabled;
             rust.clear_cache_on_exit = s.clear_cache_on_exit;
             rust.start_minimized = s.start_minimized;
             rust.close_to_tray = s.close_to_tray;
@@ -526,6 +658,8 @@ impl qobject::AppController {
         self.as_mut().show_message_notifications_changed();
         self.as_mut().show_call_notifications_changed();
         self.as_mut().notification_sound_enabled_changed();
+        self.as_mut().notification_sound_path_changed();
+        self.as_mut().autostart_enabled_changed();
         self.as_mut().show_sender_changed();
         self.as_mut().clear_cache_on_exit_changed();
         self.as_mut().start_minimized_changed();
@@ -584,6 +718,8 @@ struct AppSettings {
     download_path: String,
     current_tab: i32,
     notification_settings: NotificationSettings,
+    #[serde(default)]
+    autostart_enabled: bool,
     #[serde(default)]
     clear_cache_on_exit: bool,
     #[serde(default)]
@@ -704,6 +840,10 @@ mod tests {
         assert!(!s.clear_cache_on_exit);
         assert!(!s.start_minimized);
         assert!(!s.close_to_tray);
+        // Autostart must never be inferred as on from an older config.
+        assert!(!s.autostart_enabled);
+        // Empty sound path = platform default sound, which is the pre-field behaviour.
+        assert!(s.notification_settings.sound_path.is_empty());
         // Zoom must default to 1.0, not to f64::default() (0.0), or old configs
         // would load an invisible page.
         assert_eq!(s.zoom_factor, 1.0);

@@ -138,6 +138,14 @@ ApplicationWindow {
                 console.log("No tabs found, creating initial tab...");
                 add_tab("WhatsApp #1", "💬");
             }
+            // A whatsapp:/wa.me URL the OS handed us on the command line. There is
+            // no single-instance IPC, so this only fires for the process the OS
+            // launched; all it can do is bring that window forward.
+            var deepLink = take_pending_deep_link();
+            if (deepLink.length > 0) {
+                console.log("Deep link at startup:", deepLink);
+                mainWindow.showAndRaise();
+            }
         }
 
         onTab_added: function (name, icon) {
@@ -311,6 +319,23 @@ ApplicationWindow {
                 text: mainWindow.visible ? "Hide" : "Show"
                 onTriggered: mainWindow.toggleVisible()
             }
+            Platform.MenuSeparator {}
+            Platform.MenuItem {
+                text: "Mute notifications for 1 hour"
+                enabled: appController.notifications_enabled
+                onTriggered: appController.snooze_notifications(60)
+            }
+            Platform.MenuItem {
+                text: "Mute notifications for 8 hours"
+                enabled: appController.notifications_enabled
+                onTriggered: appController.snooze_notifications(480)
+            }
+            Platform.MenuItem {
+                text: "Unmute notifications"
+                enabled: !appController.notifications_enabled
+                onTriggered: appController.set_notifications_enabled(true)
+            }
+            Platform.MenuSeparator {}
             Platform.MenuItem {
                 text: "Quit"
                 onTriggered: Qt.quit()
@@ -318,14 +343,17 @@ ApplicationWindow {
         }
     }
 
+    function showAndRaise() {
+        mainWindow.visible = true;
+        mainWindow.raise();
+        mainWindow.requestActivate();
+    }
+
     function toggleVisible() {
-        if (mainWindow.visible) {
+        if (mainWindow.visible)
             mainWindow.visible = false;
-        } else {
-            mainWindow.visible = true;
-            mainWindow.raise();
-            mainWindow.requestActivate();
-        }
+        else
+            mainWindow.showAndRaise();
     }
 
     Shortcut {

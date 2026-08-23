@@ -134,3 +134,16 @@ diff scoped; `tokio = { features = ["full"] }` in particular costs real build ti
 - `packaging/flatpak/io.github.mrdoom.WhatsAppQT.yml` + `generate-cargo-sources.sh` — Flatpak manifest and vendored Cargo sources
 - `packaging/macos/build-macos-app.sh` + `Info.plist` — unsigned `.app` bundle and optional `.dmg` (Gatekeeper will warn on first launch)
 - `packaging/WhatsApp-QT.desktop` — shared desktop entry used across the Linux package formats
+
+### Deep links (`whatsapp://`)
+
+The scheme is declared in `packaging/WhatsApp-QT.desktop` (`MimeType=x-scheme-handler/whatsapp;`
+plus `%u` in `Exec=`) and in `packaging/macos/Info.plist` (`CFBundleURLTypes`). Windows needs an
+installer-time `HKCU\Software\Classes\whatsapp` key with a `URL Protocol` value — there is no Windows
+installer script in `packaging/` to hook that into, so it is unimplemented.
+
+`main()` parses argv for a `whatsapp:` / `https://wa.me/` argument (how Linux and Windows deliver it)
+and QML pulls it via `take_pending_deep_link()` to raise the window. **macOS delivers URLs as an
+Apple Event (`application:openURLs:`), not argv, so the macOS path is not implemented** —
+cxx-qt-lib 0.7 exposes no `NSApplicationDelegate`/Apple Event hook. There is also no single-instance
+IPC, so a link clicked while the app is already running starts a second process.

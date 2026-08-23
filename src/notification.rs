@@ -8,6 +8,10 @@ pub struct NotificationSettings {
     pub show_call_notifications: bool,
     pub sound_enabled: bool,
     pub show_sender: bool,
+    /// Absolute path to a custom notification sound. Empty = platform default.
+    /// `#[serde(default)]` so a settings.json written before this field still loads.
+    #[serde(default)]
+    pub sound_path: String,
 }
 
 impl Default for NotificationSettings {
@@ -18,6 +22,7 @@ impl Default for NotificationSettings {
             show_call_notifications: true,
             sound_enabled: true,
             show_sender: true,
+            sound_path: String::new(),
         }
     }
 }
@@ -106,7 +111,15 @@ impl NotificationService {
         }
 
         if self.settings.sound_enabled {
-            notification.sound_name("message-new-instant");
+            if self.settings.sound_path.is_empty() {
+                notification.sound_name("message-new-instant");
+            } else {
+                // sound_name() takes a freedesktop sound *theme* name, not a path;
+                // an arbitrary file has to go through the SoundFile hint.
+                notification.hint(notify_rust::Hint::SoundFile(
+                    self.settings.sound_path.clone(),
+                ));
+            }
         }
 
         notification
@@ -124,6 +137,10 @@ impl NotificationService {
         icon_path: Option<&str>,
     ) -> Result<(), NotificationError> {
         use winrt_notification::{Duration, Toast};
+
+        // NOTE: `notification_sound_path` is deliberately not honoured here.
+        // winrt-notification's `.sound()` takes a fixed `Sound` enum of
+        // ms-winsoundevent names; the WinRT toast API has no custom-file sound.
 
         let mut toast = Toast::new(Toast::POWERSHELL_APP_ID)
             .title(title)
@@ -158,6 +175,24 @@ impl NotificationService {
             .arg("-e")
             .arg(script)
             .output();
+
+        // `display notification ... sound name "X"` resolves X against the system
+        // sound libraries only, so an arbitrary file cannot go through osascript.
+        // afplay is the shortest thing that actually plays the chosen file.
+        if self.settings.sound_enabled && !self.settings.sound_path.is_empty() {
+            match std::process::Command::new("afplay")
+                .arg(&self.settings.sound_path)
+                .spawn()
+            {
+                // Don't wait on it: a long file would block the Qt thread.
+                Ok(_) => {}
+                Err(e) => log::warn!(
+                    "Could not play custom notification sound {}: {}",
+                    self.settings.sound_path,
+                    e
+                ),
+            }
+        }
 
         match result {
             Ok(_) => Ok(()),
