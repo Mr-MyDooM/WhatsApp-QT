@@ -41,6 +41,7 @@ ui_*.h
 *.jsc
 Makefile*
 *build-*
+!packaging/**/build-*.sh
 *.qm
 *.prl
 
@@ -125,3 +126,8 @@ file:/
 file:/
 file:/home/
 .idea
+.DS_Store
+
+# Claude Code
+.claude/
+*.md

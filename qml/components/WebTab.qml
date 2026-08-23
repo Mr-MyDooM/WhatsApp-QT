@@ -14,13 +14,20 @@ Item {
     id: webTabRoot
     property int index: 0
     property string url: ""
-    WebEngineProfilePrototype {
-        id: profilePrototype
-        storageName: "whatsapp_tab_" + webTabRoot.index
-        // persistentStoragePath: StandardPaths.writableLocation(StandardPaths.AppDataLocation) + "/WhatsApp-QT-Profile/" + getStorageName()
-        persistentStoragePath: StandardPaths.writableLocation(StandardPaths.AppDataLocation) + "/WhatsApp-QT-Profile/whatsapp_tab_" + webTabRoot.index
+    // Root directory for this tab's isolated profile (storage + cache live under it).
+    readonly property string profileRoot: StandardPaths.writableLocation(StandardPaths.AppDataLocation) + "/WhatsApp-QT-Profile/whatsapp_tab_" + webTabRoot.index
+    // Per-account profile: each tab gets its own storage/cache directory so
+    // WhatsApp sessions never share cookies. Named after the tab index.
+    WebEngineProfile {
+        id: tabProfile
+        storageName: webTabRoot.getStorageName()
+        offTheRecord: false
+        persistentStoragePath: webTabRoot.profileRoot + "/storage"
+        // ponytail: cache lives under the same per-tab root, otherwise every tab
+        // shares the default cache dir and the isolation above is only half real.
+        cachePath: webTabRoot.profileRoot + "/cache"
+        httpCacheType: WebEngineProfile.DiskHttpCache
         persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies
-
     }
 
     // Function to apply CSS, correctly placed in the parent scope
@@ -45,6 +52,14 @@ Item {
         }
     }
 
+    // Called per-tab on shutdown when the "Clear cache on exit" setting is on.
+    // Cache only: cookies/localStorage are deliberately left alone, wiping those
+    // would log the account out, which is not what "clear cache" means.
+    function clearCache() {
+        console.log("Clearing HTTP cache for tab", webTabRoot.index);
+        tabProfile.clearHttpCache();
+    }
+
     function getStorageName() {
         return "whatsapp_tab_" + webTabRoot.index;
     }
@@ -59,7 +74,7 @@ Item {
     WebEngineView {
         id: webView
         anchors.fill: parent
-        profile: profilePrototype.instance()
+        profile: tabProfile
         url: webTabRoot.url
         Component.onCompleted: {
             console.log("WebTab created for index:", webTabRoot.index, "loading url:", webTabRoot.url);

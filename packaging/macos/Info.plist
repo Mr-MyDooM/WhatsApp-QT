@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: build-macos-app.sh substitutes @VERSION@ from Cargo.toml. -->
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>WhatsApp QT</string>
+    <key>CFBundleDisplayName</key>
+    <string>WhatsApp QT</string>
+    <key>CFBundleIdentifier</key>
+    <string>io.github.mrdoom.WhatsAppQT</string>
+    <key>CFBundleExecutable</key>
+    <string>WhatsApp-QT</string>
+    <key>CFBundleIconFile</key>
+    <string>WhatsApp-QT.icns</string>
+    <key>CFBundleVersion</key>
+    <string>@VERSION@</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <!-- WhatsApp Web needs mic/camera for voice and video calls. -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>WhatsApp QT needs microphone access for voice and video calls.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>WhatsApp QT needs camera access for video calls.</string>
+</dict>
+</plist>

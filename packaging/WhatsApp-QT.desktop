@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=WhatsApp QT
+Comment=WhatsApp desktop client for Linux
+Exec=WhatsApp-QT
+Icon=io.github.mrdoom.WhatsAppQT
+Type=Application
+Categories=Network;InstantMessaging;
+Keywords=WhatsApp;messaging;chat;
+StartupNotify=true
+StartupWMClass=WhatsApp-QT

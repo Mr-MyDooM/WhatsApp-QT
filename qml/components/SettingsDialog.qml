@@ -19,9 +19,17 @@ Dialog {
         var selectedTheme = themeCombo.currentText.toLowerCase();
         console.log("Applying theme:", selectedTheme);
         controller.set_theme(selectedTheme);
+
+        // Path comes from the folder picker (field is readOnly), so an empty
+        // string is the only bad value reachable here.
+        var path = downloadPathField.text.trim();
+        if (path.length > 0)
+            controller.set_download_path(path);
+        else
+            console.warn("Download path empty, keeping previous value");
+
+        // save_settings() must run last, it serialises whatever the setters above wrote.
         controller.save_settings();
-        // controller.set_theme(themeCombo.currentText.toLowerCase());
-        controller.set_download_path(downloadPathField.text);
     }
 
     ScrollView {
@@ -152,14 +160,33 @@ Dialog {
                 ColumnLayout {
                     anchors.fill: parent
 
+                    // These two follow the same property + setter pattern as the
+                    // notification checkboxes above, but are guarded the way
+                    // Sidebar.qml guards set_current_tab: the AppController
+                    // properties/setters are not on the Rust side yet, so an
+                    // unguarded call would throw. They persist as soon as it lands.
                     CheckBox {
+                        id: clearCacheOnExitCheck
                         text: "Clear cache on exit"
-                        checked: false
+                        Component.onCompleted: checked = controller && controller.clear_cache_on_exit === true
+                        onClicked: {
+                            if (controller && controller.set_clear_cache_on_exit)
+                                controller.set_clear_cache_on_exit(checked);
+                            else
+                                console.warn("AppController.set_clear_cache_on_exit missing; setting not persisted");
+                        }
                     }
 
                     CheckBox {
+                        id: startMinimizedCheck
                         text: "Start minimized to tray"
-                        checked: false
+                        Component.onCompleted: checked = controller && controller.start_minimized === true
+                        onClicked: {
+                            if (controller && controller.set_start_minimized)
+                                controller.set_start_minimized(checked);
+                            else
+                                console.warn("AppController.set_start_minimized missing; setting not persisted");
+                        }
                     }
                 }
             }
@@ -189,7 +216,13 @@ Dialog {
         }
 
         onAccepted: {
-            downloadPathField.text = selectedFolder.toString().replace("file://", "");
+            // ponytail: a native folder picker cannot return garbage, so a
+            // null/empty check is the whole validation this needs.
+            if (!selectedFolder)
+                return;
+            var picked = selectedFolder.toString().replace("file://", "");
+            if (picked.length > 0)
+                downloadPathField.text = picked;
         }
     }
 

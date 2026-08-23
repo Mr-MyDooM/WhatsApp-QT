@@ -4,6 +4,9 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import QtWebEngine
 import QtQuick.Dialogs
+// Namespaced: Qt.labs.platform also defines Menu/MenuItem, which would clash
+// with the QtQuick.Controls ones used below.
+import Qt.labs.platform 1.1 as Platform
 import AppController
 import "components" as Components
 import "styles"
@@ -12,9 +15,19 @@ ApplicationWindow {
     id: mainWindow
     font.family: "Fira Code"
     font.pointSize: 10
-    visible: true
+    visible: !appController.start_minimized
     visibility: "Maximized"
     title: "WhatsApp Desktop - Multi Account"
+    onClosing: function (close) {
+        if (appController.clear_cache_on_exit) {
+            for (var i = 0; i < tabsModel.count; i++) {
+                var webTab = stackLayout.children[i];
+                if (webTab && webTab.clearCache) {
+                    webTab.clearCache();
+                }
+            }
+        }
+    }
     property alias controller: appController
     property string currentTheme: "system"
     property var downloadedFiles: []
@@ -206,6 +219,37 @@ ApplicationWindow {
                 text: "Show Sidebar"
             }
             onClicked: sidebarVisible = true
+        }
+    }
+
+    Platform.SystemTrayIcon {
+        id: trayIcon
+        visible: true
+        // trayIconPath is set from Rust (main.rs) as a file:// URL.
+        icon.source: trayIconPath
+        tooltip: mainWindow.title
+
+        onActivated: mainWindow.toggleVisible()
+
+        menu: Platform.Menu {
+            Platform.MenuItem {
+                text: mainWindow.visible ? "Hide" : "Show"
+                onTriggered: mainWindow.toggleVisible()
+            }
+            Platform.MenuItem {
+                text: "Quit"
+                onTriggered: Qt.quit()
+            }
+        }
+    }
+
+    function toggleVisible() {
+        if (mainWindow.visible) {
+            mainWindow.visible = false;
+        } else {
+            mainWindow.visible = true;
+            mainWindow.raise();
+            mainWindow.requestActivate();
         }
     }
 

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.mrdoom.WhatsAppQT</id>
+  <name>WhatsApp QT</name>
+  <summary>WhatsApp desktop client for Linux</summary>
+  <description>
+    <p>
+      A Linux-first, privacy-friendly WhatsApp desktop client built with Rust and Qt.
+      Supports multiple accounts via browser-like tabs, light/dark/system themes,
+      system tray integration, and persistent settings.
+    </p>
+  </description>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <url type="homepage">https://github.com/mrdoom/whatsapp-qt</url>
+  <url type="bugtracker">https://github.com/mrdoom/whatsapp-qt/issues</url>
+  <categories>
+    <category>Network</category>
+    <category>InstantMessaging</category>
+  </categories>
+  <launchable type="desktop-id">io.github.mrdoom.WhatsAppQT.desktop</launchable>
+  <provides>
+    <binary>WhatsApp-QT</binary>
+  </provides>
+  <releases>
+    <release version="0.1.0" date="2026-04-21"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

@@ -121,7 +121,7 @@ impl NotificationService {
         &self,
         title: &str,
         message: &str,
-        _icon_path: Option<&str>,
+        icon_path: Option<&str>,
     ) -> Result<(), NotificationError> {
         use winrt_notification::{Duration, Toast};
 
@@ -166,8 +166,8 @@ impl NotificationService {
     }
 
     pub fn test_notification(&self) -> Result<(), NotificationError> {
-         let icon_path = std::env::current_dir()
-            .unwrap()
+        // Resolve against the app's data dir, not the process working dir.
+        let icon_path = crate::find_data_dir()
             .join("resources/icons/tray.png")
             .to_string_lossy()
             .to_string();

@@ -13,6 +13,33 @@ Rectangle {
     property int currentIndex: stackLayout ? stackLayout.currentIndex : 0
     property real collapsedWidth: 64
     property real expandedWidth: 200
+    readonly property int maxTabNameLength: 40
+
+    // Trim, clamp to a sidebar-sized label, and fall back if nothing survives.
+    // Exposed so the rename UI can reuse it once main.qml implements renaming.
+    function sanitizeTabName(name, fallback) {
+        var clean = (name === undefined || name === null) ? "" : String(name).trim();
+        if (clean.length === 0)
+            return fallback;
+        return clean.length > maxTabNameLength ? clean.substring(0, maxTabNameLength) : clean;
+    }
+
+    // "WhatsApp #" + (count + 1) collides after a tab is removed (remove 1 of 3
+    // and the next new tab is named "WhatsApp #3" again). Scan for a free number.
+    function nextTabName() {
+        var taken = {};
+        for (var i = 0; i < tabsModel.count; i++) {
+            var entry = tabsModel.get(i);
+            if (entry && entry.name)
+                taken[entry.name] = true;
+        }
+        for (var n = 1; n <= tabsModel.count + 1; n++) {
+            var candidate = "WhatsApp #" + n;
+            if (!taken[candidate])
+                return candidate;
+        }
+        return "WhatsApp #" + (tabsModel.count + 1);
+    }
     Layout.preferredWidth: sidebarVisible ? expandedWidth : collapsedWidth
     Behavior on Layout.preferredWidth {
                     NumberAnimation {
@@ -79,7 +106,13 @@ Rectangle {
                 border.color: currentTheme === "dark" ? "#444" : "#bbb"
                 MouseArea {
                     anchors.fill: parent
-                    onClicked: appController.add_tab("WhatsApp #" + (tabsModel.count + 1), "💬")
+                    onClicked: {
+                        if (!appController || !appController.add_tab) {
+                            console.warn("AppController.add_tab unavailable");
+                            return;
+                        }
+                        appController.add_tab(sidebar.sanitizeTabName(sidebar.nextTabName(), "WhatsApp"), "💬");
+                    }
                 }
                 Text {
                     anchors.centerIn: parent

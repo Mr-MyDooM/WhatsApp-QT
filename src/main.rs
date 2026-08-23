@@ -73,13 +73,17 @@ struct AppController {
     notification_sound_enabled_changed: qt_signal!(),
     show_sender: qt_property!(bool; NOTIFY show_sender_changed),
     show_sender_changed: qt_signal!(),
+    clear_cache_on_exit: qt_property!(bool; NOTIFY clear_cache_on_exit_changed),
+    clear_cache_on_exit_changed: qt_signal!(),
+    start_minimized: qt_property!(bool; NOTIFY start_minimized_changed),
+    start_minimized_changed: qt_signal!(),
     tabs: Vec<TabInfo>,
 
     test_notification: qt_method!(
         fn test_notification(&self) {
             match self.notification_service.test_notification() {
-                Ok(_) => println!("Test notification sent successfully"),
-                Err(e) => println!("Failed to send test notification: {}", e),
+                Ok(_) => log::info!("Test notification sent successfully"),
+                Err(e) => log::error!("Failed to send test notification: {}", e),
             }
         }
     ),
@@ -87,7 +91,7 @@ struct AppController {
         fn set_notifications_enabled(&mut self, enabled: bool) {
             self.notifications_enabled = enabled;
             self.notifications_enabled_changed();
-            self.update_notification_settings();
+            let _ = self.update_notification_settings();
             self.save_settings();
         }
     ),
@@ -95,7 +99,7 @@ struct AppController {
         fn set_show_message_notifications(&mut self, enabled: bool) {
             self.show_message_notifications = enabled;
             self.show_message_notifications_changed();
-            self.update_notification_settings();
+            let _ = self.update_notification_settings();
             self.save_settings();
         }
     ),
@@ -103,7 +107,7 @@ struct AppController {
         fn set_show_call_notifications(&mut self, enabled: bool) {
             self.show_call_notifications = enabled;
             self.show_call_notifications_changed();
-            self.update_notification_settings();
+            let _ = self.update_notification_settings();
             self.save_settings();
         }
     ),
@@ -111,7 +115,7 @@ struct AppController {
         fn set_notification_sound_enabled(&mut self, enabled: bool) {
             self.notification_sound_enabled = enabled;
             self.notification_sound_enabled_changed();
-            self.update_notification_settings();
+            let _ = self.update_notification_settings();
             self.save_settings();
         }
     ),
@@ -119,7 +123,21 @@ struct AppController {
         fn set_show_sender(&mut self, enabled: bool) {
             self.show_sender = enabled;
             self.show_sender_changed();
-            self.update_notification_settings();
+            let _ = self.update_notification_settings();
+            self.save_settings();
+        }
+    ),
+    set_clear_cache_on_exit: qt_method!(
+        fn set_clear_cache_on_exit(&mut self, enabled: bool) {
+            self.clear_cache_on_exit = enabled;
+            self.clear_cache_on_exit_changed();
+            self.save_settings();
+        }
+    ),
+    set_start_minimized: qt_method!(
+        fn set_start_minimized(&mut self, enabled: bool) {
+            self.start_minimized = enabled;
+            self.start_minimized_changed();
             self.save_settings();
         }
     ),
@@ -173,14 +191,13 @@ struct AppController {
 
     set_theme: qt_method!(
         fn set_theme(&mut self, theme: QString) {
-            println!("Setting theme to: {}", theme.to_string());
+            log::info!("Setting theme to: {}", theme.to_string());
             self.theme = theme.clone();
 
             // Generate CSS before emitting signals
             let css = self.generate_css(theme.to_string());
             self.css_cache = QString::from(css.clone());
-            println!("Generated CSS Length: {}", css.len());
-            println!("CSS content: {}", css);
+            log::debug!("Generated CSS ({} bytes): {}", css.len(), css);
             // Emit signals to update UI
             self.theme_changed();
             self.apply_theme_css(self.css_cache.clone());
@@ -198,7 +215,7 @@ struct AppController {
     ),
     save_settings: qt_method!(
         fn save_settings(&self) {
-            let mut settings = AppSettings {
+            let settings = AppSettings {
                 theme: self.theme.to_string(),
                 download_path: self.download_path.to_string(),
                 current_tab: self.current_tab,
@@ -209,6 +226,8 @@ struct AppController {
                     sound_enabled: self.notification_sound_enabled,
                     show_sender: self.show_sender,
                 },
+                clear_cache_on_exit: self.clear_cache_on_exit,
+                start_minimized: self.start_minimized,
                 tabs: self
                     .tabs
                     .iter()
@@ -219,35 +238,60 @@ struct AppController {
                     .collect(),
             };
 
-            settings.encrypt_fields();
-            let cfg_path = get_config_path();
-            let async_settings = settings.clone();
-
-            if let Some(cfg) = get_config_path() {
-                if let Ok(json) = serde_json::to_string_pretty(&settings) {
-                    let _ = std::fs::write(cfg.join("settings.json"), &json);
-                }
-            }
-
-            if let Some(cfg) = get_config_path() {
-                if let Ok(json) = serde_json::to_string_pretty(&settings) {
-                    match fs::write(cfg.join("settings.json"), &json) {
-                        Ok(_) => self.settings_saved(),
-                        Err(e) => self.save_failed(QString::from(e.to_string())),
-                    }
-                } else {
-                    self.save_failed(QString::from("Failed to serialize settings"));
-                }
-            } else {
+            let Some(cfg) = get_config_path() else {
+                log::error!("Could not find config directory; settings not saved");
                 self.save_failed(QString::from("Could not find config directory"));
+                return;
+            };
+
+            let json = match serde_json::to_string_pretty(&settings) {
+                Ok(json) => json,
+                Err(e) => {
+                    log::error!("Failed to serialize settings: {}", e);
+                    self.save_failed(QString::from("Failed to serialize settings"));
+                    return;
+                }
+            };
+
+            match fs::write(cfg.join("settings.json"), &json) {
+                Ok(_) => {
+                    log::debug!("Settings saved to {}", cfg.join("settings.json").display());
+                    self.settings_saved();
+                }
+                Err(e) => {
+                    log::error!("Failed to write settings: {}", e);
+                    self.save_failed(QString::from(e.to_string()));
+                }
             }
         }
     ),
     load_settings: qt_method!(
         fn load_settings(&mut self) {
-            if let Some(cfg) = get_config_path() {
-                if let Ok(data) = fs::read_to_string(cfg.join("settings.json")) {
-                    if let Ok(s) = serde_json::from_str::<AppSettings>(&data) {
+            let Some(cfg) = get_config_path() else {
+                log::warn!("Could not find config directory; using default settings");
+                return;
+            };
+            let settings_file = cfg.join("settings.json");
+            match fs::read_to_string(&settings_file) {
+                Err(e) => {
+                    // Missing file on first run is normal; anything else is worth a warning.
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        log::info!("No settings file yet, using defaults");
+                    } else {
+                        log::warn!(
+                            "Could not read {}: {}; using defaults",
+                            settings_file.display(),
+                            e
+                        );
+                    }
+                }
+                Ok(data) => match serde_json::from_str::<AppSettings>(&data) {
+                    Err(e) => log::warn!(
+                        "Malformed settings file {}: {}; using defaults",
+                        settings_file.display(),
+                        e
+                    ),
+                    Ok(s) => {
                         self.theme = s.theme.into();
                         self.download_path = s.download_path.into();
                         self.current_tab = s.current_tab;
@@ -260,6 +304,8 @@ struct AppController {
                             s.notification_settings.show_call_notifications;
                         self.notification_sound_enabled = s.notification_settings.sound_enabled;
                         self.show_sender = s.notification_settings.show_sender;
+                        self.clear_cache_on_exit = s.clear_cache_on_exit;
+                        self.start_minimized = s.start_minimized;
 
                         // Emit all change signals
                         self.theme_changed();
@@ -270,9 +316,11 @@ struct AppController {
                         self.show_call_notifications_changed();
                         self.notification_sound_enabled_changed();
                         self.show_sender_changed();
+                        self.clear_cache_on_exit_changed();
+                        self.start_minimized_changed();
 
                         // Update notification service
-                        self.update_notification_settings();
+                        let _ = self.update_notification_settings();
                     }
                 }
             }
@@ -289,7 +337,11 @@ impl Default for AppController {
             theme: "system".into(),
             theme_changed: Default::default(),
             download_path: dirs::download_dir()
-                .unwrap_or_else(|| std::env::current_dir().unwrap())
+                .or_else(|| std::env::current_dir().ok())
+                .unwrap_or_else(|| {
+                    log::warn!("No download dir and no accessible working dir; using \".\"");
+                    PathBuf::from(".")
+                })
                 .to_string_lossy()
                 .to_string()
                 .into(),
@@ -322,12 +374,18 @@ impl Default for AppController {
             notification_sound_enabled_changed: Default::default(),
             show_sender: true,
             show_sender_changed: Default::default(),
+            clear_cache_on_exit: false,
+            clear_cache_on_exit_changed: Default::default(),
+            start_minimized: false,
+            start_minimized_changed: Default::default(),
             test_notification: Default::default(),
             set_notifications_enabled: Default::default(),
             set_show_message_notifications: Default::default(),
             set_show_call_notifications: Default::default(),
             set_notification_sound_enabled: Default::default(),
             set_show_sender: Default::default(),
+            set_clear_cache_on_exit: Default::default(),
+            set_start_minimized: Default::default(),
             tabs: Vec::new(),
         }
     }
@@ -336,7 +394,7 @@ impl Default for AppController {
 impl AppController {
     fn generate_css(&self, theme: String) -> String {
         let mut css = String::new();
-        println!("Generating CSS for theme: {}", theme);
+        log::debug!("Generating CSS for theme: {}", theme);
 
         if theme == "dark" {
             css.push_str(DARK_BASE_CSS);
@@ -374,7 +432,6 @@ impl AppController {
             );
         }
 
-        println!("Generated CSS: {}", css);
         css
     }
 
@@ -386,19 +443,8 @@ impl AppController {
             sound_enabled: self.notification_sound_enabled,
             show_sender: self.show_sender,
         };
-        let _icon_path = std::env::current_dir()
-            .unwrap()
-            .join("resources/icons/tray.png")
-            .to_string_lossy()
-            .to_string();
         self.notification_service.update_settings(settings);
-        Ok(()) // ← REQUIRED!
-    }
-}
-impl AppSettings {
-    pub fn encrypt_fields(&mut self) {
-        // TODO: Add encryption logic later
-        // For now, this does nothing
+        Ok(())
     }
 }
 #[derive(Serialize, Deserialize, Clone)]
@@ -407,6 +453,10 @@ struct AppSettings {
     download_path: String,
     current_tab: i32,
     notification_settings: NotificationSettings,
+    #[serde(default)]
+    clear_cache_on_exit: bool,
+    #[serde(default)]
+    start_minimized: bool,
     tabs: Vec<TabInfo>, // NEW FIELD
 }
 #[derive(Serialize, Deserialize, Clone)]
@@ -423,40 +473,32 @@ fn get_config_path() -> Option<PathBuf> {
         None
     }
 }
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use std::sync::{Arc, Mutex};
-    use std::thread;
-    use tray_item::TrayItem;
 
-    let should_show = Arc::new(Mutex::new(true));
-    let should_show_clone = Arc::clone(&should_show);
-    let exe_dir = std::env::current_exe()?.parent().unwrap().to_path_buf();
-    let icon_path = exe_dir.join("resources/icons/tray.png");
-
-    thread::spawn(move || {
-        let mut tray = TrayItem::new("WhatsApp", "&icon_path").unwrap();
-
-        tray.add_label("WhatsApp Desktop").unwrap();
-
-        let show_clone = Arc::clone(&should_show_clone);
-        tray.add_menu_item("Show/Hide", move || {
-            let mut visible = show_clone.lock().unwrap();
-            *visible = !*visible;
-            // you can implement toggling logic via global state later
-            println!("Toggled window (you need to implement actual show/hide)");
-        })
-        .unwrap();
-
-        tray.add_menu_item("Quit", || {
-            println!("Quitting app from tray...");
-            std::process::exit(0);
-        })
-        .unwrap();
-
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(1));
+fn find_data_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("WHATSAPPQT_DATA_DIR") {
+        return PathBuf::from(dir);
+    }
+    // Development: running from repo root
+    if PathBuf::from("qml/main.qml").exists() {
+        return PathBuf::from(".");
+    }
+    // Installed: binary is in bin/, data is in ../share/whatsapp-qt/
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(bin_dir) = exe.parent() {
+            let share = bin_dir.join("../share/whatsapp-qt");
+            if let Ok(canonical) = share.canonicalize() {
+                if canonical.join("qml/main.qml").exists() {
+                    return canonical;
+                }
+            }
         }
-    });
+    }
+    PathBuf::from(".")
+}
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
+
+    let data_dir = find_data_dir();
 
     qml_register_type::<AppController>(cstr!("AppController"), 1, 0, cstr!("AppController"));
     let mut engine = QmlEngine::new();
@@ -480,18 +522,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Expose application directory path
     let app_dir = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_string_lossy()
-        .to_string();
+        .ok()
+        .and_then(|exe| exe.parent().map(|p| p.to_string_lossy().to_string()))
+        .unwrap_or_else(|| {
+            log::warn!("Could not determine executable directory, falling back to \".\"");
+            ".".to_string()
+        });
     engine.set_property(
         "applicationDirPath".into(),
         QVariant::from(QString::from(app_dir)),
     );
 
-    // Load the main QML file (using include_str! approach)
-    engine.load_file("qml/main.qml".into());
+    // Tray icon, as a file:// URL so QML's icon.source can load it directly.
+    let tray_icon = data_dir.join("resources/icons/tray.png");
+    let tray_icon_url = match tray_icon.canonicalize() {
+        Ok(p) => format!("file://{}", p.to_string_lossy()),
+        Err(e) => {
+            log::warn!("Tray icon not found at {}: {}", tray_icon.display(), e);
+            String::new()
+        }
+    };
+    engine.set_property(
+        "trayIconPath".into(),
+        QVariant::from(QString::from(tray_icon_url)),
+    );
+
+    let qml_main = data_dir.join("qml/main.qml");
+    log::info!("Loading QML entry point: {}", qml_main.display());
+    engine.load_file(qml_main.to_string_lossy().as_ref().into());
     engine.exec();
     Ok(())
 }
