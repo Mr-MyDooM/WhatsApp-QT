@@ -16,6 +16,8 @@ Item {
     property string url: ""
     // Lets main.qml's zoom shortcuts set zoom on a tab without reaching inside it.
     property alias zoomFactor: webView.zoomFactor
+    // Cross-chat unread count for this account, scraped out of the page title.
+    property int unreadCount: 0
     // Root directory for this tab's isolated profile (storage + cache live under it).
     readonly property string profileRoot: StandardPaths.writableLocation(StandardPaths.AppDataLocation) + "/WhatsApp-QT-Profile/whatsapp_tab_" + webTabRoot.index
     // Per-account profile: each tab gets its own storage/cache directory so
@@ -30,6 +32,10 @@ Item {
         cachePath: webTabRoot.profileRoot + "/cache"
         httpCacheType: WebEngineProfile.DiskHttpCache
         persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies
+        // Native QtWebEngine spellcheck; bound, not copied, so flipping the
+        // setting takes effect on already-open tabs. Languages are left at
+        // QtWebEngine's system default.
+        spellCheckEnabled: mainWindow.controller.spellcheck_enabled
     }
 
     // Function to apply CSS, correctly placed in the parent scope
@@ -60,6 +66,12 @@ Item {
     function clearCache() {
         console.log("Clearing HTTP cache for tab", webTabRoot.index);
         tabProfile.clearHttpCache();
+    }
+
+    // "(3) WhatsApp" -> 3, "(99+) WhatsApp" -> 99, anything else -> 0.
+    function parseUnread(title) {
+        var m = /^\((\d+)\+?\)/.exec(title || "");
+        return m ? parseInt(m[1], 10) : 0;
     }
 
     function getStorageName() {
@@ -98,6 +110,9 @@ Item {
                 // applyThemeTimer.start();
             }
         }
+        // WhatsApp Web mirrors its unread total into document.title as "(3) WhatsApp"
+        // (and "(99+) WhatsApp" past 99), which WebEngineView.title exposes for free.
+        onTitleChanged: webTabRoot.unreadCount = webTabRoot.parseUnread(webView.title)
         onNewWindowRequested: function (request) {
             Qt.openUrlExternally(request.requestedUrl);
         }

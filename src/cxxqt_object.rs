@@ -89,6 +89,7 @@ pub mod qobject {
         #[qproperty(bool, start_minimized, READ, WRITE = set_start_minimized, NOTIFY = start_minimized_changed)]
         #[qproperty(bool, close_to_tray, READ, WRITE = set_close_to_tray, NOTIFY = close_to_tray_changed)]
         #[qproperty(f64, zoom_factor, READ, WRITE = set_zoom_factor, NOTIFY = zoom_factor_changed)]
+        #[qproperty(bool, spellcheck_enabled, READ, WRITE = set_spellcheck_enabled, NOTIFY = spellcheck_enabled_changed)]
         // Geometry is four values that always move together, so they share one NOTIFY
         // and one setter (set_window_geometry): a drag-resize would otherwise write
         // settings.json four times per frame. READ-only, no per-field WRITE.
@@ -133,6 +134,8 @@ pub mod qobject {
         fn close_to_tray_changed(self: Pin<&mut AppController>);
         #[qsignal]
         fn zoom_factor_changed(self: Pin<&mut AppController>);
+        #[qsignal]
+        fn spellcheck_enabled_changed(self: Pin<&mut AppController>);
         #[qsignal]
         fn window_geometry_changed(self: Pin<&mut AppController>);
 
@@ -187,6 +190,8 @@ pub mod qobject {
         #[qinvokable]
         fn set_zoom_factor(self: Pin<&mut AppController>, factor: f64);
         #[qinvokable]
+        fn set_spellcheck_enabled(self: Pin<&mut AppController>, enabled: bool);
+        #[qinvokable]
         fn set_window_geometry(self: Pin<&mut AppController>, w: i32, h: i32, x: i32, y: i32);
 
         #[qinvokable]
@@ -232,6 +237,7 @@ pub struct AppControllerRust {
     pub start_minimized: bool,
     pub close_to_tray: bool,
     pub zoom_factor: f64,
+    pub spellcheck_enabled: bool,
     pub window_width: i32,
     pub window_height: i32,
     pub window_x: i32,
@@ -267,6 +273,7 @@ impl Default for AppControllerRust {
             start_minimized: false,
             close_to_tray: false,
             zoom_factor: 1.0,
+            spellcheck_enabled: true,
             // 0 means "never saved a windowed geometry"; QML keeps its maximized default.
             window_width: 0,
             window_height: 0,
@@ -474,6 +481,12 @@ impl qobject::AppController {
         self.as_mut().save_settings();
     }
 
+    pub fn set_spellcheck_enabled(mut self: Pin<&mut Self>, enabled: bool) {
+        self.as_mut().rust_mut().spellcheck_enabled = enabled;
+        self.as_mut().spellcheck_enabled_changed();
+        self.as_mut().save_settings();
+    }
+
     pub fn set_window_geometry(mut self: Pin<&mut Self>, w: i32, h: i32, x: i32, y: i32) {
         {
             let mut rust = self.as_mut().rust_mut();
@@ -547,6 +560,7 @@ impl qobject::AppController {
             start_minimized: self.start_minimized,
             close_to_tray: self.close_to_tray,
             zoom_factor: self.zoom_factor,
+            spellcheck_enabled: self.spellcheck_enabled,
             window_width: self.window_width,
             window_height: self.window_height,
             window_x: self.window_x,
@@ -641,6 +655,7 @@ impl qobject::AppController {
             rust.start_minimized = s.start_minimized;
             rust.close_to_tray = s.close_to_tray;
             rust.zoom_factor = s.zoom_factor.clamp(MIN_ZOOM, MAX_ZOOM);
+            rust.spellcheck_enabled = s.spellcheck_enabled;
             rust.window_width = s.window_width;
             rust.window_height = s.window_height;
             rust.window_x = s.window_x;
@@ -665,6 +680,7 @@ impl qobject::AppController {
         self.as_mut().start_minimized_changed();
         self.as_mut().close_to_tray_changed();
         self.as_mut().zoom_factor_changed();
+        self.as_mut().spellcheck_enabled_changed();
         self.as_mut().window_geometry_changed();
     }
 }
@@ -728,6 +744,10 @@ struct AppSettings {
     close_to_tray: bool,
     #[serde(default = "default_zoom_factor")]
     zoom_factor: f64,
+    // Same zero-value trap as zoom_factor: plain #[serde(default)] would silently
+    // turn spellcheck off for every config written before this field existed.
+    #[serde(default = "default_true")]
+    spellcheck_enabled: bool,
     #[serde(default)]
     window_width: i32,
     #[serde(default)]
@@ -744,6 +764,10 @@ const MAX_ZOOM: f64 = 3.0;
 
 fn default_zoom_factor() -> f64 {
     1.0
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -849,5 +873,8 @@ mod tests {
         assert_eq!(s.zoom_factor, 1.0);
         // 0 geometry means "no saved windowed size"; QML stays maximized.
         assert_eq!((s.window_width, s.window_height), (0, 0));
+        // Spellcheck must default ON, not to bool::default(), or an old config
+        // would silently disable it.
+        assert!(s.spellcheck_enabled);
     }
 }

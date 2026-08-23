@@ -242,6 +242,16 @@ Dialog {
                                 console.warn("AppController.set_close_to_tray missing; setting not persisted");
                         }
                     }
+
+                    // Native QtWebEngine spellcheck, bound live into every tab's
+                    // WebEngineProfile. No language picker: the system default is
+                    // what QtWebEngine already uses.
+                    CheckBox {
+                        id: spellcheckCheck
+                        text: "Enable spellcheck while typing"
+                        Component.onCompleted: checked = controller.spellcheck_enabled
+                        onClicked: controller.set_spellcheck_enabled(checked)
+                    }
                 }
             }
 

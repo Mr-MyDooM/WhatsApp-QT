@@ -17,7 +17,7 @@ ApplicationWindow {
     font.pointSize: 10
     visible: !appController.start_minimized
     visibility: "Maximized"
-    title: "WhatsApp Desktop - Multi Account"
+    title: totalUnread > 0 ? "WhatsApp Desktop - Multi Account (" + totalUnread + ")" : "WhatsApp Desktop - Multi Account"
     onClosing: function (close) {
         if (appController.close_to_tray) {
             close.accepted = false;
@@ -43,8 +43,14 @@ ApplicationWindow {
     // before load_settings() has had a chance to restore it.
     property bool geometryReady: false
 
+    // Sum of every tab's unread count; drives the window title and tray tooltip.
+    property int totalUnread: 0
+
     ListModel {
         id: tabsModel
+        // A closing tab never emits unreadCountChanged, so recount once its
+        // delegate is actually gone.
+        onCountChanged: Qt.callLater(mainWindow.updateUnread)
     }
     onWidthChanged: { propagateAppSize(); saveGeometry(); }
     onHeightChanged: { propagateAppSize(); saveGeometry(); }
@@ -112,6 +118,18 @@ ApplicationWindow {
         }
         appController.set_zoom_factor(z);
     }
+    // Same iteration as applyZoom: stackLayout.children includes the Repeater
+    // itself, which the unreadCount guard filters out.
+    function updateUnread() {
+        var total = 0;
+        for (var i = 0; i < stackLayout.children.length; i++) {
+            var tab = stackLayout.children[i];
+            if (tab && tab.unreadCount !== undefined)
+                total += tab.unreadCount;
+        }
+        totalUnread = total;
+    }
+
     function propagateAppSize() {
         for (var i = 0; i < tabsModel.count; i++) {
             var item = stackLayout.children[i];
@@ -271,6 +289,7 @@ ApplicationWindow {
                     id: webTabDelegate
                     index: model.index
                     url: model.url
+                    onUnreadCountChanged: mainWindow.updateUnread()
                 }
             }
         }
@@ -310,7 +329,10 @@ ApplicationWindow {
         // rather than a bare context property because cxx-qt-lib 0.7 has no
         // QQmlContext::setContextProperty binding.
         icon.source: appController.tray_icon_path
-        tooltip: mainWindow.title
+        // ponytail: no badge icon asset exists in resources/icons, and compositing
+        // one at runtime is more QML than it is worth. Tooltip + window title carry
+        // the count on every platform with zero extra assets.
+        tooltip: mainWindow.totalUnread > 0 ? "WhatsApp Desktop (" + mainWindow.totalUnread + " unread)" : "WhatsApp Desktop"
 
         onActivated: mainWindow.toggleVisible()
 
