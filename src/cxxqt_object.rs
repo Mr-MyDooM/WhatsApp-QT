@@ -85,6 +85,15 @@ pub mod qobject {
         #[qproperty(bool, show_sender, READ, WRITE = set_show_sender, NOTIFY = show_sender_changed)]
         #[qproperty(bool, clear_cache_on_exit, READ, WRITE = set_clear_cache_on_exit, NOTIFY = clear_cache_on_exit_changed)]
         #[qproperty(bool, start_minimized, READ, WRITE = set_start_minimized, NOTIFY = start_minimized_changed)]
+        #[qproperty(bool, close_to_tray, READ, WRITE = set_close_to_tray, NOTIFY = close_to_tray_changed)]
+        #[qproperty(f64, zoom_factor, READ, WRITE = set_zoom_factor, NOTIFY = zoom_factor_changed)]
+        // Geometry is four values that always move together, so they share one NOTIFY
+        // and one setter (set_window_geometry): a drag-resize would otherwise write
+        // settings.json four times per frame. READ-only, no per-field WRITE.
+        #[qproperty(i32, window_width, READ, NOTIFY = window_geometry_changed)]
+        #[qproperty(i32, window_height, READ, NOTIFY = window_geometry_changed)]
+        #[qproperty(i32, window_x, READ, NOTIFY = window_geometry_changed)]
+        #[qproperty(i32, window_y, READ, NOTIFY = window_geometry_changed)]
         // Resolved once at construction and never changes, so CONSTANT: no setter and no
         // notify signal. Replaces the old `trayIconPath` context property, because
         // cxx-qt-lib 0.7 binds no QQmlContext::setContextProperty equivalent.
@@ -114,6 +123,12 @@ pub mod qobject {
         fn clear_cache_on_exit_changed(self: Pin<&mut AppController>);
         #[qsignal]
         fn start_minimized_changed(self: Pin<&mut AppController>);
+        #[qsignal]
+        fn close_to_tray_changed(self: Pin<&mut AppController>);
+        #[qsignal]
+        fn zoom_factor_changed(self: Pin<&mut AppController>);
+        #[qsignal]
+        fn window_geometry_changed(self: Pin<&mut AppController>);
 
         #[qsignal]
         fn save_failed(self: Pin<&mut AppController>, error: QString);
@@ -150,6 +165,12 @@ pub mod qobject {
         fn set_clear_cache_on_exit(self: Pin<&mut AppController>, enabled: bool);
         #[qinvokable]
         fn set_start_minimized(self: Pin<&mut AppController>, enabled: bool);
+        #[qinvokable]
+        fn set_close_to_tray(self: Pin<&mut AppController>, enabled: bool);
+        #[qinvokable]
+        fn set_zoom_factor(self: Pin<&mut AppController>, factor: f64);
+        #[qinvokable]
+        fn set_window_geometry(self: Pin<&mut AppController>, w: i32, h: i32, x: i32, y: i32);
 
         #[qinvokable]
         fn add_tab(self: Pin<&mut AppController>, name: QString, icon: QString);
@@ -185,6 +206,12 @@ pub struct AppControllerRust {
     pub show_sender: bool,
     pub clear_cache_on_exit: bool,
     pub start_minimized: bool,
+    pub close_to_tray: bool,
+    pub zoom_factor: f64,
+    pub window_width: i32,
+    pub window_height: i32,
+    pub window_x: i32,
+    pub window_y: i32,
     pub tray_icon_path: QString,
     // Not a Q_PROPERTY: QML only ever reads it through get_theme_css().
     pub css_cache: QString,
@@ -205,6 +232,13 @@ impl Default for AppControllerRust {
             show_sender: true,
             clear_cache_on_exit: false,
             start_minimized: false,
+            close_to_tray: false,
+            zoom_factor: 1.0,
+            // 0 means "never saved a windowed geometry"; QML keeps its maximized default.
+            window_width: 0,
+            window_height: 0,
+            window_x: 0,
+            window_y: 0,
             tray_icon_path: QString::from(&tray_icon_url()),
             css_cache: QString::default(),
             notification_service: NotificationService::new(),
@@ -299,6 +333,32 @@ impl qobject::AppController {
         self.as_mut().save_settings();
     }
 
+    pub fn set_close_to_tray(mut self: Pin<&mut Self>, enabled: bool) {
+        self.as_mut().rust_mut().close_to_tray = enabled;
+        self.as_mut().close_to_tray_changed();
+        self.as_mut().save_settings();
+    }
+
+    pub fn set_zoom_factor(mut self: Pin<&mut Self>, factor: f64) {
+        // Same clamp QML applies, enforced here too since this is the persisted value.
+        let clamped = factor.clamp(MIN_ZOOM, MAX_ZOOM);
+        self.as_mut().rust_mut().zoom_factor = clamped;
+        self.as_mut().zoom_factor_changed();
+        self.as_mut().save_settings();
+    }
+
+    pub fn set_window_geometry(mut self: Pin<&mut Self>, w: i32, h: i32, x: i32, y: i32) {
+        {
+            let mut rust = self.as_mut().rust_mut();
+            rust.window_width = w;
+            rust.window_height = h;
+            rust.window_x = x;
+            rust.window_y = y;
+        }
+        self.as_mut().window_geometry_changed();
+        self.as_mut().save_settings();
+    }
+
     pub fn add_tab(mut self: Pin<&mut Self>, name: QString, icon: QString) {
         self.as_mut().tab_added(name, icon);
         self.as_mut().save_settings();
@@ -355,6 +415,12 @@ impl qobject::AppController {
             },
             clear_cache_on_exit: self.clear_cache_on_exit,
             start_minimized: self.start_minimized,
+            close_to_tray: self.close_to_tray,
+            zoom_factor: self.zoom_factor,
+            window_width: self.window_width,
+            window_height: self.window_height,
+            window_x: self.window_x,
+            window_y: self.window_y,
             tabs: self
                 .tabs
                 .iter()
@@ -441,6 +507,12 @@ impl qobject::AppController {
             rust.show_sender = s.notification_settings.show_sender;
             rust.clear_cache_on_exit = s.clear_cache_on_exit;
             rust.start_minimized = s.start_minimized;
+            rust.close_to_tray = s.close_to_tray;
+            rust.zoom_factor = s.zoom_factor.clamp(MIN_ZOOM, MAX_ZOOM);
+            rust.window_width = s.window_width;
+            rust.window_height = s.window_height;
+            rust.window_x = s.window_x;
+            rust.window_y = s.window_y;
 
             // Update notification service
             rust.update_notification_settings();
@@ -457,6 +529,9 @@ impl qobject::AppController {
         self.as_mut().show_sender_changed();
         self.as_mut().clear_cache_on_exit_changed();
         self.as_mut().start_minimized_changed();
+        self.as_mut().close_to_tray_changed();
+        self.as_mut().zoom_factor_changed();
+        self.as_mut().window_geometry_changed();
     }
 }
 
@@ -513,7 +588,26 @@ struct AppSettings {
     clear_cache_on_exit: bool,
     #[serde(default)]
     start_minimized: bool,
+    #[serde(default)]
+    close_to_tray: bool,
+    #[serde(default = "default_zoom_factor")]
+    zoom_factor: f64,
+    #[serde(default)]
+    window_width: i32,
+    #[serde(default)]
+    window_height: i32,
+    #[serde(default)]
+    window_x: i32,
+    #[serde(default)]
+    window_y: i32,
     tabs: Vec<TabInfo>,
+}
+
+const MIN_ZOOM: f64 = 0.25;
+const MAX_ZOOM: f64 = 3.0;
+
+fn default_zoom_factor() -> f64 {
+    1.0
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -609,5 +703,11 @@ mod tests {
         assert_eq!(s.current_tab, 2);
         assert!(!s.clear_cache_on_exit);
         assert!(!s.start_minimized);
+        assert!(!s.close_to_tray);
+        // Zoom must default to 1.0, not to f64::default() (0.0), or old configs
+        // would load an invisible page.
+        assert_eq!(s.zoom_factor, 1.0);
+        // 0 geometry means "no saved windowed size"; QML stays maximized.
+        assert_eq!((s.window_width, s.window_height), (0, 0));
     }
 }

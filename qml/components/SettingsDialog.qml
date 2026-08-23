@@ -188,6 +188,18 @@ Dialog {
                                 console.warn("AppController.set_start_minimized missing; setting not persisted");
                         }
                     }
+
+                    CheckBox {
+                        id: closeToTrayCheck
+                        text: "Close to tray instead of quitting"
+                        Component.onCompleted: checked = controller && controller.close_to_tray === true
+                        onClicked: {
+                            if (controller && controller.set_close_to_tray)
+                                controller.set_close_to_tray(checked);
+                            else
+                                console.warn("AppController.set_close_to_tray missing; setting not persisted");
+                        }
+                    }
                 }
             }
 

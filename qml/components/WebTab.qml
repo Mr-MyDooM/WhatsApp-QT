@@ -14,6 +14,8 @@ Item {
     id: webTabRoot
     property int index: 0
     property string url: ""
+    // Lets main.qml's zoom shortcuts set zoom on a tab without reaching inside it.
+    property alias zoomFactor: webView.zoomFactor
     // Root directory for this tab's isolated profile (storage + cache live under it).
     readonly property string profileRoot: StandardPaths.writableLocation(StandardPaths.AppDataLocation) + "/WhatsApp-QT-Profile/whatsapp_tab_" + webTabRoot.index
     // Per-account profile: each tab gets its own storage/cache directory so
@@ -81,6 +83,9 @@ Item {
             // profile.httpUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
             // profile.httpUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36 WhatsApp/2.2134.10";
             profile.httpUserAgent = mainWindow.controller.get_user_agent();
+            // Persisted global zoom, so a new tab or a restart keeps the last level.
+            zoomFactor = mainWindow.controller.zoom_factor;
+            console.log("Initial zoomFactor for tab", webTabRoot.index, ":", zoomFactor);
             console.log("Using User Agent:", profile.httpUserAgent);
         }
         onLoadingChanged: function (loadRequest) {

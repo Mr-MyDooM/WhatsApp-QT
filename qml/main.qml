@@ -19,6 +19,11 @@ ApplicationWindow {
     visibility: "Maximized"
     title: "WhatsApp Desktop - Multi Account"
     onClosing: function (close) {
+        if (appController.close_to_tray) {
+            close.accepted = false;
+            mainWindow.toggleVisible();
+            return;
+        }
         if (appController.clear_cache_on_exit) {
             for (var i = 0; i < tabsModel.count; i++) {
                 var webTab = stackLayout.children[i];
@@ -34,12 +39,79 @@ ApplicationWindow {
     property string lastDownloadedFile: ""
     property string webProfilePath: "WhatsApp-QT-Profile"
     property bool sidebarVisible: true
+    // Guards against the maximized startup size overwriting a saved windowed one
+    // before load_settings() has had a chance to restore it.
+    property bool geometryReady: false
 
     ListModel {
         id: tabsModel
     }
-    onWidthChanged: propagateAppSize();
-    onHeightChanged: propagateAppSize();
+    onWidthChanged: { propagateAppSize(); saveGeometry(); }
+    onHeightChanged: { propagateAppSize(); saveGeometry(); }
+    onXChanged: saveGeometry();
+    onYChanged: saveGeometry();
+
+    // Only a windowed geometry is worth remembering; maximized/fullscreen sizes are
+    // whatever the screen happens to be.
+    function saveGeometry() {
+        if (!geometryReady || visibility !== Window.Windowed)
+            return;
+        appController.set_window_geometry(width, height, x, y);
+    }
+
+    function restoreGeometry() {
+        if (appController.window_width <= 0 || appController.window_height <= 0) {
+            geometryReady = true;   // nothing saved: keep the maximized default
+            return;
+        }
+        mainWindow.visibility = Window.Windowed;
+        // Un-maximizing is a round trip to the window manager, which lands its own
+        // "normal" geometry afterwards and would clobber an assignment made here.
+        // Applying on the next event loop pass wins that race.
+        Qt.callLater(applySavedGeometry);
+    }
+
+    function applySavedGeometry() {
+        mainWindow.width = appController.window_width;
+        mainWindow.height = appController.window_height;
+        mainWindow.x = appController.window_x;
+        mainWindow.y = appController.window_y;
+        geometryReady = true;
+        console.log("Restored windowed geometry:", width + "x" + height, "at", x + "," + y);
+    }
+
+    // One place that switches tabs: the Rust-side property AND the visible stack.
+    // stackLayout.currentIndex is not bound to appController.current_tab, so setting
+    // only the property (as the old Ctrl+Tab shortcuts did) changed nothing on screen.
+    function switchToTab(i) {
+        if (i < 0 || i >= tabsModel.count)
+            return;
+        stackLayout.currentIndex = i;
+        appController.set_current_tab(i);
+    }
+
+    // Tab naming lives in Sidebar (nextTabName/sanitizeTabName); this is the single
+    // entry point both the "+" button and Ctrl+T go through.
+    function addTab() {
+        appController.add_tab(sidebar.sanitizeTabName(sidebar.nextTabName(), "WhatsApp"), "💬");
+    }
+
+    function closeCurrentTab() {
+        if (tabsModel.count > 1)
+            appController.remove_tab(stackLayout.currentIndex);
+    }
+
+    // Zoom is a single global setting, so it applies to every open tab: per-tab zoom
+    // that resets on tab switch would be worse.
+    function applyZoom(factor) {
+        var z = Math.max(0.25, Math.min(3.0, factor));
+        for (var i = 0; i < stackLayout.children.length; i++) {
+            var tab = stackLayout.children[i];
+            if (tab && tab.zoomFactor !== undefined)
+                tab.zoomFactor = z;
+        }
+        appController.set_zoom_factor(z);
+    }
     function propagateAppSize() {
         for (var i = 0; i < tabsModel.count; i++) {
             var item = stackLayout.children[i];
@@ -60,6 +132,7 @@ ApplicationWindow {
             load_settings();
             currentTheme = appController.theme;
             applyTheme();
+            mainWindow.restoreGeometry();
             console.log("Initial tabsModel count: " + tabsModel.count);
             if (tabsModel.count === 0) {
                 console.log("No tabs found, creating initial tab...");
@@ -257,16 +330,53 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Ctrl+Tab"
-        onActivated: {
-            let next = (stackLayout.currentIndex + 1) % tabsModel.count
-            appController.set_current_tab(next)
-        }
+        onActivated: mainWindow.switchToTab((stackLayout.currentIndex + 1) % tabsModel.count)
     }
     Shortcut {
         sequence: "Ctrl+Shift+Tab"
-        onActivated: {
-            let prev = (stackLayout.currentIndex - 1 + tabsModel.count) % tabsModel.count
-            appController.set_current_tab(prev)
+        onActivated: mainWindow.switchToTab((stackLayout.currentIndex - 1 + tabsModel.count) % tabsModel.count)
+    }
+    Shortcut {
+        sequence: "Ctrl+T"
+        onActivated: mainWindow.addTab()
+    }
+    Shortcut {
+        sequence: "Ctrl+W"
+        onActivated: mainWindow.closeCurrentTab()
+    }
+    Shortcut {
+        sequence: "Ctrl+,"
+        onActivated: sidebar.openSettings()
+    }
+    Shortcut {
+        sequence: "Ctrl+Q"
+        onActivated: Qt.quit()
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+M"
+        onActivated: appController.set_notifications_enabled(!appController.notifications_enabled)
+    }
+
+    // Ctrl+1..Ctrl+9 -> tab 0..8. Instantiator, not Repeater: Shortcut is a QtObject.
+    Instantiator {
+        model: 9
+        delegate: Shortcut {
+            sequence: "Ctrl+" + (index + 1)
+            onActivated: mainWindow.switchToTab(index)
         }
+    }
+
+    // Zoom: Ctrl+= and Ctrl++ both zoom in, since the plus key needs Shift on most layouts.
+    Shortcut {
+        sequences: ["Ctrl+=", "Ctrl++"]
+        onActivated: mainWindow.applyZoom(appController.zoom_factor + 0.1)
+    }
+    Shortcut {
+        sequence: "Ctrl+-"
+        onActivated: mainWindow.applyZoom(appController.zoom_factor - 0.1)
+    }
+    Shortcut {
+        sequence: "Ctrl+0"
+        onActivated: mainWindow.applyZoom(1.0)
     }
 }

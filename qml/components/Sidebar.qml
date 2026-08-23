@@ -40,6 +40,10 @@ Rectangle {
         }
         return "WhatsApp #" + (tabsModel.count + 1);
     }
+    // settingsDialog is scoped to this file; exposed so Ctrl+, in main.qml can reach it.
+    function openSettings() {
+        settingsDialog.open();
+    }
     Layout.preferredWidth: sidebarVisible ? expandedWidth : collapsedWidth
     Behavior on Layout.preferredWidth {
                     NumberAnimation {
@@ -82,11 +86,7 @@ Rectangle {
                             visible: tabMouseArea.containsMouse
                             text: tabsModel.get(index) ? tabsModel.get(index).name : ""
                         }
-                        onClicked: {
-                            if (stackLayout) stackLayout.currentIndex = index
-                            if (appController && appController.set_current_tab)
-                                appController.set_current_tab(index)
-                        }
+                        onClicked: mainWindow.switchToTab(index)
                     }
                     Text {
                         anchors.centerIn: parent
@@ -106,13 +106,7 @@ Rectangle {
                 border.color: currentTheme === "dark" ? "#444" : "#bbb"
                 MouseArea {
                     anchors.fill: parent
-                    onClicked: {
-                        if (!appController || !appController.add_tab) {
-                            console.warn("AppController.add_tab unavailable");
-                            return;
-                        }
-                        appController.add_tab(sidebar.sanitizeTabName(sidebar.nextTabName(), "WhatsApp"), "💬");
-                    }
+                    onClicked: mainWindow.addTab()
                 }
                 Text {
                     anchors.centerIn: parent
@@ -148,7 +142,7 @@ Rectangle {
             spacing: 12
             Button {
                 icon.name: "settings"
-                onClicked: settingsDialog.open()
+                onClicked: sidebar.openSettings()
                 width: 40; height: 40
             }
             Button {
