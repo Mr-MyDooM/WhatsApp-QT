@@ -225,8 +225,10 @@ ApplicationWindow {
     Platform.SystemTrayIcon {
         id: trayIcon
         visible: true
-        // trayIconPath is set from Rust (main.rs) as a file:// URL.
-        icon.source: trayIconPath
+        // A file:// URL, resolved once by Rust. It is a property on AppController
+        // rather than a bare context property because cxx-qt-lib 0.7 has no
+        // QQmlContext::setContextProperty binding.
+        icon.source: appController.tray_icon_path
         tooltip: mainWindow.title
 
         onActivated: mainWindow.toggleVisible()

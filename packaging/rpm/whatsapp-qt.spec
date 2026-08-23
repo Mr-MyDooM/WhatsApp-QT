@@ -6,12 +6,12 @@ License:        MIT
 URL:            https://github.com/mrdoom/whatsapp-qt
 BuildArch:      x86_64
 
-# Runtime dependencies (Qt5 + WebEngine + GTK tray)
-Requires:       qt5-qtbase
-Requires:       qt5-qtdeclarative
-Requires:       qt5-qtwebengine
-Requires:       gtk3
-Requires:       libappindicator-gtk3
+# Runtime dependencies (Qt6 + WebEngine). No GTK/appindicator: the tray is
+# Qt.labs.platform.SystemTrayIcon in QML, not the tray-item crate.
+# NOTE: Fedora naming. openSUSE uses qt6-base / qt6-declarative / qt6-webengine.
+Requires:       qt6-qtbase
+Requires:       qt6-qtdeclarative
+Requires:       qt6-qtwebengine
 
 %description
 A Linux-first, privacy-friendly WhatsApp desktop client built with

@@ -41,7 +41,7 @@ Section: net
 Priority: optional
 Architecture: $ARCH
 Installed-Size: $INSTALLED_SIZE
-Depends: libqt5core5t64 | libqt5core5a, libqt5qml5, libqt5quickwidgets5, libqt5webengine5 | qml-module-qtwebengine, libgtk-3-0, libappindicator3-1 | libayatana-appindicator3-1
+Depends: libqt6core6t64 | libqt6core6, libqt6gui6, libqt6qml6, libqt6quick6, libqt6webenginequick6, qml6-module-qtquick-controls, qml6-module-qtquick-dialogs, qml6-module-qtwebengine, qml6-module-qt-labs-platform
 Maintainer: MJ <mritunjay.rajput@armakuni.com>
 Homepage: https://github.com/mrdoom/whatsapp-qt
 Description: WhatsApp desktop client for Linux

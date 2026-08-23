@@ -8,11 +8,11 @@ Designed to be cross-platform (Linux & Windows) and lightweight — perfect for 
 
 ## 📦 Features
 
-- 🖼️ Beautiful QML frontend powered by Qt
-- 🦀 Rust backend using [`qmetaobject`](https://crates.io/crates/qmetaobject)
+- 🖼️ Beautiful QML frontend powered by Qt6
+- 🦀 Rust backend using [`cxx-qt`](https://crates.io/crates/cxx-qt)
 - 🧭 Multi-tab support (like browser tabs)
 - 🎨 Light/Dark/system themes
-- 🔔 System tray support (GTK-based)
+- 🔔 System tray support (Qt-native, no GTK tray needed)
 - 💾 Persistent settings (saved to `~/.config/WhatsApp-QT`)
 - 🔧 Designed for Linux (tested on openSUSE TumbleWeed/SlowRoll + Plasma), Windows coming soon
 
@@ -22,15 +22,18 @@ Designed to be cross-platform (Linux & Windows) and lightweight — perfect for 
 
 ### 🧰 Prerequisites
 
-> You should have Rust (stable), Qt, and GTK dev libraries installed.
+> You should have Rust (stable) and Qt6 dev libraries (including QtWebEngine) installed.
 
 ```bash
 # Rust toolchain
 curl https://sh.rustup.rs -sSf | sh
 
-# GTK & Qt dev (for openSUSE Tumbleweed)
-sudo zypper install gtk3-devel libqt5-qtbase-devel libqt5-qtdeclarative-devel
+# Qt6 dev (for openSUSE Tumbleweed)
+sudo zypper install qt6-base-devel qt6-declarative-devel qt6-webengine-devel
 ```
+
+QtWebEngine is a **build-time** dependency: `build.rs` links the `WebEngineQuick`
+module so `QtWebEngineQuick::initialize()` can run before the app is constructed.
 
 ---
 
@@ -74,8 +77,9 @@ cargo run
 | Issue | Fix |
 |------|-----|
 | `settings` borrow/move panic | Avoid using `.clone()` inside `tokio::spawn`, or switch to sync I/O |
-| Tray icon not showing | Ensure `gtk3` is installed and tray icon path is correct |
-| GUI not launching | Ensure Qt dev packages are installed (`libqt5-*`) |
+| Tray icon not showing | Ensure a tray/StatusNotifier host is running and `qml6-module-qt-labs-platform` is installed |
+| GUI not launching | Ensure Qt6 dev packages are installed (`qt6-*`) |
+| New `.qml` file not found at runtime | Add it to `qml_files` in `build.rs` — QML is compiled into the binary |
 
 ---
 

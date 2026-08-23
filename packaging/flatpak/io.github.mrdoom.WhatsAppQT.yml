@@ -1,6 +1,9 @@
 app-id: io.github.mrdoom.WhatsAppQT
 runtime: org.kde.Platform
-runtime-version: '5.15-23.08'
+# Qt6 runtime: the app moved from qmetaobject (Qt5) to cxx-qt (Qt6).
+# UNVERIFIED against Flathub: confirm this runtime-version still exists and that the
+# rust-stable extension branch below matches its freedesktop base before releasing.
+runtime-version: '6.7'
 sdk: org.kde.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable//23.08
