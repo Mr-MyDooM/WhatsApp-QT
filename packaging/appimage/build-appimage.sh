@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Build a WhatsApp-QT AppImage.
-# Requires: nix-shell (shell.nix in repo root), curl
+# Requires: system Qt6 with QtWebEngine and QMAKE pointing at its qmake,
+# squashfs-tools (unsquashfs with zstd support), curl
 set -euo pipefail
+
+: "${QMAKE:?Set QMAKE to your Qt6 qmake (for example /usr/bin/qmake6)}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BUILD_DIR="$REPO_ROOT/target/appimage"
@@ -11,7 +14,7 @@ TOOLS_DIR="$BUILD_DIR/tools"
 # ── 1. Build release binary ──────────────────────────────────────────────────
 echo "==> Building release binary..."
 cd "$REPO_ROOT"
-nix-shell --run "cargo build --release"
+cargo build --release
 
 # ── 2. Stage AppDir ──────────────────────────────────────────────────────────
 echo "==> Staging AppDir..."
@@ -52,15 +55,14 @@ fetch_tool linuxdeploy-plugin-qt \
     "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage"
 
 # ── 4. Extract AppImages (bypasses AppImageLauncher binfmt_misc interception) ─
-# nix's unsquashfs supports zstd; system squashfuse may not.
+# unsquashfs must support zstd; squashfuse may not.
 extract_tool() {
     local name="$1"
     local appimage="$TOOLS_DIR/$name"
     local dest="$TOOLS_DIR/${name}.appdir"
     if [ ! -d "$dest" ]; then
         echo "==> Extracting $name..."
-        nix-shell "$REPO_ROOT/shell.nix" --run \
-            "unsquashfs -d '$dest' '$appimage'"
+        unsquashfs -d "$dest" "$appimage"
     fi
 }
 
@@ -69,7 +71,6 @@ extract_tool linuxdeploy-plugin-qt
 
 # ── 5. Bundle Qt libraries and produce AppImage ──────────────────────────────
 echo "==> Bundling Qt libraries..."
-QMAKE="$(nix-shell "$REPO_ROOT/shell.nix" --run 'echo $QMAKE')"
 export OUTPUT="$REPO_ROOT/WhatsApp-QT-x86_64.AppImage"
 
 # Symlink the Qt plugin where linuxdeploy expects it
@@ -78,17 +79,14 @@ mkdir -p "$PLUGIN_DIR"
 ln -sf "$TOOLS_DIR/linuxdeploy-plugin-qt.appdir/usr/bin/linuxdeploy-plugin-qt" \
        "$PLUGIN_DIR/linuxdeploy-plugin-qt"
 
-nix-shell "$REPO_ROOT/shell.nix" --run "
-    export QMAKE='$QMAKE'
-    export OUTPUT='$OUTPUT'
-    export LD_LIBRARY_PATH=\"\$QT_PLUGIN_PATH/../lib:\${LD_LIBRARY_PATH:-}\"
-    '$TOOLS_DIR/linuxdeploy.appdir/AppRun' \
-        --appdir '$APPDIR' \
-        --plugin qt \
-        --output appimage \
-        --desktop-file '$APPDIR/usr/share/applications/io.github.mrdoom.WhatsAppQT.desktop' \
-        --icon-file '$APPDIR/usr/share/icons/hicolor/512x512/apps/io.github.mrdoom.WhatsAppQT.png'
-"
+export QMAKE
+export LD_LIBRARY_PATH="$("$QMAKE" -query QT_INSTALL_LIBS):${LD_LIBRARY_PATH:-}"
+"$TOOLS_DIR/linuxdeploy.appdir/AppRun" \
+    --appdir "$APPDIR" \
+    --plugin qt \
+    --output appimage \
+    --desktop-file "$APPDIR/usr/share/applications/io.github.mrdoom.WhatsAppQT.desktop" \
+    --icon-file "$APPDIR/usr/share/icons/hicolor/512x512/apps/io.github.mrdoom.WhatsAppQT.png"
 
 echo ""
 echo "AppImage: $REPO_ROOT/WhatsApp-QT-x86_64.AppImage"

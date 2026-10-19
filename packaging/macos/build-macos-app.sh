@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build a WhatsApp-QT.app bundle (and optionally a .dmg) for macOS.
-# Requires: Qt6 with QtWebEngine (nix-shell, or `brew install qt`), Rust toolchain.
+# Requires: Qt6 with QtWebEngine (`brew install qt`), Rust toolchain.
 # Homebrew's `qt` formula is Qt 6; `qt@5` is the old one and will not work since
 # the migration to cxx-qt.
 #
@@ -19,15 +19,11 @@ CONTENTS="$APP/Contents"
 # ── 1. Build release binary ──────────────────────────────────────────────────
 echo "==> Building release binary (v$VERSION)..."
 cd "$REPO_ROOT"
-if command -v nix-shell >/dev/null 2>&1; then
-    nix-shell --run "cargo build --release"
-else
-    # Homebrew Qt is keg-only, so qmake is not on PATH by default.
-    if [ -z "${QMAKE:-}" ] && [ -x "$(brew --prefix qt 2>/dev/null)/bin/qmake" ]; then
-        export QMAKE="$(brew --prefix qt)/bin/qmake"
-    fi
-    cargo build --release
+# Homebrew Qt is keg-only, so qmake is not on PATH by default.
+if [ -z "${QMAKE:-}" ] && [ -x "$(brew --prefix qt 2>/dev/null)/bin/qmake" ]; then
+    export QMAKE="$(brew --prefix qt)/bin/qmake"
 fi
+cargo build --release
 
 # ── 2. Stage the bundle ──────────────────────────────────────────────────────
 # find_data_dir() in src/main.rs resolves data as <bin dir>/../share/whatsapp-qt,

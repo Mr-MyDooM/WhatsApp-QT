@@ -14,7 +14,7 @@ Requires:       qt6-qtdeclarative
 Requires:       qt6-qtwebengine
 
 %description
-A Linux-first, privacy-friendly WhatsApp desktop client built with
+A privacy-friendly WhatsApp desktop client built with
 Rust and Qt. Supports multiple accounts via browser-like tabs,
 light/dark/system themes, and system tray integration.
 

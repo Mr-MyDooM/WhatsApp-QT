@@ -5,7 +5,7 @@
   <summary>WhatsApp desktop client for Linux</summary>
   <description>
     <p>
-      A Linux-first, privacy-friendly WhatsApp desktop client built with Rust and Qt.
+      A privacy-friendly WhatsApp desktop client built with Rust and Qt.
       Supports multiple accounts via browser-like tabs, light/dark/system themes,
       system tray integration, and persistent settings.
     </p>

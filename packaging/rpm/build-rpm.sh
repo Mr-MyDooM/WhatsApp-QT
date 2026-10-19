@@ -17,7 +17,7 @@ fi
 # ── 1. Build ─────────────────────────────────────────────────────────────────
 echo "==> Building release binary..."
 cd "$REPO_ROOT"
-nix-shell --run "cargo build --release"
+cargo build --release
 
 # ── 2. Stage sources for rpmbuild ────────────────────────────────────────────
 echo "==> Staging sources..."

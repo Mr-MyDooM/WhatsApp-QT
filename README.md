@@ -1,8 +1,8 @@
 
 # WhatsApp-QT
 
-🧙 A Linux first simple, privacy-friendly WhatsApp-like desktop client built in Rust + QML (Qt), inspired by [ZapZap](https://github.com/rafatosta/zapzap).  
-Designed to be cross-platform (Linux & Windows) and lightweight — perfect for system tray usage, theming, and tabbed chat-like browsing.
+🧙 A macOS first simple, privacy-friendly WhatsApp-like desktop client built in Rust + QML (Qt), inspired by [ZapZap](https://github.com/rafatosta/zapzap).  
+Designed to be cross-platform (macOS, Linux & Windows) and lightweight — perfect for system tray usage, theming, and tabbed chat-like browsing.
 
 ---
 
@@ -14,7 +14,7 @@ Designed to be cross-platform (Linux & Windows) and lightweight — perfect for 
 - 🎨 Light/Dark/system themes
 - 🔔 System tray support (Qt-native, no GTK tray needed)
 - 💾 Persistent settings (saved to `~/.config/WhatsApp-QT`)
-- 🔧 Designed for Linux (tested on openSUSE TumbleWeed/SlowRoll + Plasma), Windows coming soon
+- 🔧 Designed for macOS first, then Linux; Windows is best-effort
 
 ---
 
@@ -97,25 +97,24 @@ cargo run
 
 ## 🖥️ Platform Support
 
-### 🐧 Linux — First-Class Citizen
-This app is developed and tested primarily on Linux (because that's where real computing happens).  
-Tested on openSUSE Slowroll/Tumbleweed + KDE, but should work on most modern distros.  
-If you're running Linux, you're in the sweet spot.  
-Expect full feature support and the least surprises.
+### 🍏 macOS: First-Class Citizen
+This app is developed and tested primarily on macOS.  
+Install Qt with `brew install qt`, then `export QMAKE="$(brew --prefix qt)/bin/qmake"` before `cargo run`.  
+Build an unsigned `.app` with `packaging/macos/build-macos-app.sh`.
 
-### 🪟 Windows — Works (Mostly)
+### 🐧 Linux: Supported
+Second priority. Earlier versions were tested on openSUSE Slowroll/Tumbleweed + KDE.  
+Install your distro's Qt6 dev packages and set `QMAKE` to the Qt6 `qmake`.
+
+### 🪟 Windows: Works (Mostly)
 Basic features run fine, though some quirks may exist.  
-Support is "best effort" — patches welcome, rants optional.
-
-### 🍏 macOS — Who Knows
-macOS support is in the "maybe one day if I borrow a MacBook" phase.  
-If you're adventurous and want to try it, PRs are open.
+Support is "best effort": patches welcome, rants optional.
 
 ---
 
 > ⚠️ **Note from the dev:**  
 > I'm a SRE first, coding my way into developerhood.  
-> Expect stability on Linux, and some occasional chaos elsewhere.
+> Expect stability on macOS, and some occasional chaos elsewhere.
  
 
 ---

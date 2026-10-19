@@ -12,7 +12,7 @@ STAGING="$REPO_ROOT/target/deb/$PKG_NAME"
 # ── 1. Build ─────────────────────────────────────────────────────────────────
 echo "==> Building release binary..."
 cd "$REPO_ROOT"
-nix-shell --run "cargo build --release"
+cargo build --release
 
 # ── 2. Stage package tree ─────────────────────────────────────────────────────
 echo "==> Staging package..."
@@ -45,7 +45,7 @@ Depends: libqt6core6t64 | libqt6core6, libqt6gui6, libqt6qml6, libqt6quick6, lib
 Maintainer: MJ <mritunjay.rajput@armakuni.com>
 Homepage: https://github.com/mrdoom/whatsapp-qt
 Description: WhatsApp desktop client for Linux
- A Linux-first, privacy-friendly WhatsApp desktop client built with
+ A privacy-friendly WhatsApp desktop client built with
  Rust and Qt. Supports multiple accounts via browser-like tabs,
  light/dark/system themes, and system tray integration.
 EOF
