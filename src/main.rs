@@ -1,4 +1,5 @@
 mod core;
+mod notify;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -24,6 +25,8 @@ const SIDEBAR_LABEL: &str = "sidebar";
 const MAX_SWITCH_SHORTCUTS: usize = 9;
 const SETTINGS_LABEL: &str = "settings";
 const ZOOM_STEP: f64 = 0.1;
+/// Replaces `window.Notification` in each account page and sends the alert to `notify`.
+const NOTIFICATION_SCRIPT: &str = include_str!("notification_shim.js");
 const SAVE_FAILED_MESSAGE: &str =
     "Could not save your settings. The change is active until you quit the app.";
 /// WhatsApp Web rejects the default WKWebView user agent ("works with Safari 15+").
@@ -78,6 +81,7 @@ fn add_account_webview(
         WebviewUrl::External(ACCOUNT_URL.parse()?),
     )
     .user_agent(USER_AGENT)
+    .initialization_script(NOTIFICATION_SCRIPT)
     // The unread count comes from the page title, read here on the Rust side, so the
     // remote page needs no IPC command for it.
     .on_document_title_changed(|webview, title| {
@@ -222,6 +226,19 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                     eprintln!("Could not update sidebar: {e}");
                 }
             }
+            Effect::ShowNotification {
+                account_id,
+                title,
+                body,
+                sound,
+            } => notify::show(app.clone(), account_id, title, body, sound),
+            Effect::FocusWindow => {
+                if let Some(window) = app.get_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            }
             Effect::SaveSettings { json } => {
                 let Some(path) = settings_path() else {
                     report_error(app, SAVE_FAILED_MESSAGE, "Could not find config directory");
@@ -278,7 +295,7 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
     }
 }
 
-fn dispatch(app: &AppHandle, event: Event) {
+pub(crate) fn dispatch(app: &AppHandle, event: Event) {
     let effects = app
         .state::<Mutex<Core>>()
         .lock()
@@ -378,15 +395,37 @@ fn open_settings(app: &AppHandle) {
     }
 }
 
+/// The only command the remote page may call: see `capabilities/remote.json`.
+/// The account comes from the calling webview's label, never from the page's data.
+#[tauri::command]
+fn notify(app: AppHandle, webview: tauri::Webview, title: String, body: String) {
+    let Some(id) = webview.label().strip_prefix(ACCOUNT_LABEL_PREFIX) else {
+        return;
+    };
+    dispatch(
+        &app,
+        Event::NotificationRequested {
+            account_id: id.to_string(),
+            title,
+            body,
+        },
+    );
+}
+
 // Allowed for the local settings webview only: see `build.rs` and `capabilities/settings.json`.
 #[tauri::command]
 fn get_settings(core: tauri::State<Mutex<Core>>) -> serde_json::Value {
     let core = core.lock().expect("core lock");
+    let n = core.notification_settings();
     serde_json::json!({
         "theme": core.theme(),
         "zoom_factor": core.zoom_factor(),
         "close_to_tray": core.close_to_tray(),
         "start_minimized": core.start_minimized(),
+        "notifications": n.show_message_notifications,
+        "show_sender": n.show_sender,
+        "sound_enabled": n.sound_enabled,
+        "sound_path": n.sound_path,
     })
 }
 
@@ -406,6 +445,25 @@ fn set_theme(app: AppHandle, theme: String) {
 }
 
 #[tauri::command]
+fn set_notifications(
+    app: AppHandle,
+    messages: bool,
+    show_sender: bool,
+    sound_enabled: bool,
+    sound_path: String,
+) {
+    dispatch(
+        &app,
+        Event::NotificationSettingsChanged {
+            messages,
+            show_sender,
+            sound_enabled,
+            sound_path,
+        },
+    );
+}
+
+#[tauri::command]
 fn set_zoom(app: AppHandle, factor: f64) {
     dispatch(&app, Event::ZoomChanged { factor });
 }
@@ -418,6 +476,7 @@ const MENU_SETTINGS: &str = "settings";
 const MENU_ZOOM_IN: &str = "zoom-in";
 const MENU_ZOOM_OUT: &str = "zoom-out";
 const MENU_ZOOM_RESET: &str = "zoom-reset";
+const MENU_NOTIFICATIONS: &str = "notifications-toggle";
 const MENU_ADD: &str = "account-add";
 const MENU_REMOVE: &str = "account-remove";
 const MENU_NEXT: &str = "account-next";
@@ -489,6 +548,14 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             Some(format!("CmdOrCtrl+{n}").as_str()),
         )?)?;
     }
+    account_menu.append(&PredefinedMenuItem::separator(app)?)?;
+    account_menu.append(&MenuItem::with_id(
+        app,
+        MENU_NOTIFICATIONS,
+        "Toggle Notifications",
+        true,
+        Some("CmdOrCtrl+Shift+N"),
+    )?)?;
     let view_menu = Submenu::with_items(
         app,
         "View",
@@ -533,6 +600,7 @@ fn on_menu_event(app: &AppHandle, id: &str) {
             }
         }
         MENU_SETTINGS => open_settings(app),
+        MENU_NOTIFICATIONS => dispatch(app, Event::NotificationsToggled),
         MENU_ZOOM_IN => dispatch(app, Event::ZoomStepped { delta: ZOOM_STEP }),
         MENU_ZOOM_OUT => dispatch(app, Event::ZoomStepped { delta: -ZOOM_STEP }),
         MENU_ZOOM_RESET => dispatch(app, Event::ZoomChanged { factor: 1.0 }),
@@ -570,7 +638,9 @@ fn main() {
             set_theme,
             set_zoom,
             set_close_to_tray,
-            set_start_minimized
+            set_start_minimized,
+            set_notifications,
+            notify
         ])
         // SIZE and POSITION only: restoring VISIBLE would defeat start-minimized.
         .plugin(

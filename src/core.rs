@@ -7,6 +7,11 @@ use serde::{Deserialize, Serialize};
 const DEFAULT_ACCOUNT_NAME: &str = "Account 1";
 const MIN_ZOOM: f64 = 0.25;
 const MAX_ZOOM: f64 = 3.0;
+/// Caps for text from the web page, which is untrusted.
+const MAX_TITLE_CHARS: usize = 100;
+const MAX_BODY_CHARS: usize = 300;
+const MAX_SOUND_PATH_CHARS: usize = 1024;
+const HIDDEN_SENDER_BODY: &str = "New message";
 
 const DARK_BASE_CSS: &str = r#"
     /* Dark theme base styles */
@@ -162,6 +167,19 @@ impl Default for Settings {
     }
 }
 
+/// What a notification plays.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Sound {
+    Off,
+    /// The platform default sound.
+    Default,
+    File(String),
+}
+
+fn cut(text: &str, max: usize) -> String {
+    text.chars().take(max).collect()
+}
+
 #[derive(Debug)]
 pub enum Event {
     /// `raw` is the settings file content, `Ok(None)` when there is no file,
@@ -200,6 +218,23 @@ pub enum Event {
     ZoomStepped {
         delta: f64,
     },
+    /// Title and body come from the web page: untrusted.
+    NotificationRequested {
+        account_id: String,
+        title: String,
+        body: String,
+    },
+    NotificationClicked {
+        account_id: String,
+    },
+    NotificationSettingsChanged {
+        messages: bool,
+        show_sender: bool,
+        sound_enabled: bool,
+        sound_path: String,
+    },
+    /// The shortcut: message notifications on or off.
+    NotificationsToggled,
     /// The user closed the main window (red button).
     CloseRequested,
     /// Tray icon click or tray menu Show/Hide.
@@ -251,6 +286,13 @@ pub enum Effect {
         accounts: Vec<Account>,
         active: String,
     },
+    ShowNotification {
+        account_id: String,
+        title: String,
+        body: String,
+        sound: Sound,
+    },
+    FocusWindow,
     SaveSettings {
         json: String,
     },
@@ -313,6 +355,41 @@ impl Core {
             Event::ThemeChanged { theme } => self.set_theme(theme),
             Event::ZoomChanged { factor } => self.set_zoom(factor),
             Event::ZoomStepped { delta } => self.set_zoom(self.settings.zoom_factor + delta),
+            Event::NotificationRequested {
+                account_id,
+                title,
+                body,
+            } => self.notify(&account_id, &title, &body),
+            Event::NotificationClicked { account_id } => {
+                let mut effects = self.switch(&account_id);
+                if !effects.is_empty() {
+                    effects.push(Effect::FocusWindow);
+                }
+                effects
+            }
+            Event::NotificationSettingsChanged {
+                messages,
+                show_sender,
+                sound_enabled,
+                sound_path,
+            } => {
+                if sound_path.chars().count() > MAX_SOUND_PATH_CHARS {
+                    return vec![Effect::ReportError {
+                        message: "Sound file path is too long".into(),
+                    }];
+                }
+                let n = &mut self.settings.notification_settings;
+                n.show_message_notifications = messages;
+                n.show_sender = show_sender;
+                n.sound_enabled = sound_enabled;
+                n.sound_path = sound_path;
+                self.saved_effects()
+            }
+            Event::NotificationsToggled => {
+                let n = &mut self.settings.notification_settings;
+                n.show_message_notifications = !n.show_message_notifications;
+                self.saved_effects()
+            }
             Event::CloseRequested => vec![if self.settings.close_to_tray {
                 Effect::HideWindow
             } else {
@@ -334,6 +411,40 @@ impl Core {
             Event::DeepLinkOpened { url } => self.open_deep_link(&url),
             Event::TitleChanged { id, title } => self.set_unread(id, unread_count(&title)),
         }
+    }
+
+    pub fn notification_settings(&self) -> &NotificationSettings {
+        &self.settings.notification_settings
+    }
+
+    fn notify(&self, account_id: &str, title: &str, body: &str) -> Vec<Effect> {
+        let n = &self.settings.notification_settings;
+        let Some(account) = self.settings.accounts.iter().find(|a| a.id == account_id) else {
+            return Vec::new();
+        };
+        if !n.enabled || !n.show_message_notifications {
+            return Vec::new();
+        }
+        let body = if n.show_sender {
+            format!(
+                "{}: {}",
+                cut(title, MAX_TITLE_CHARS),
+                cut(body, MAX_BODY_CHARS)
+            )
+        } else {
+            HIDDEN_SENDER_BODY.to_string()
+        };
+        let sound = match (n.sound_enabled, n.sound_path.is_empty()) {
+            (false, _) => Sound::Off,
+            (true, true) => Sound::Default,
+            (true, false) => Sound::File(n.sound_path.clone()),
+        };
+        vec![Effect::ShowNotification {
+            account_id: account.id.clone(),
+            title: account.name.clone(),
+            body,
+            sound,
+        }]
     }
 
     pub fn theme(&self) -> &str {
@@ -1138,6 +1249,89 @@ mod tests {
         assert_eq!(effects[1], Effect::ApplyZoom { factor: 1.2 });
     }
 
+    // --- message notifications ---
+
+    fn notify(core: &mut Core, id: &str, title: &str, body: &str) -> Vec<Effect> {
+        core.handle(Event::NotificationRequested {
+            account_id: id.into(),
+            title: title.into(),
+            body: body.into(),
+        })
+    }
+
+    fn shown(effects: &[Effect]) -> Option<(&str, &str, &Sound)> {
+        effects.iter().find_map(|e| match e {
+            Effect::ShowNotification {
+                title, body, sound, ..
+            } => Some((title.as_str(), body.as_str(), sound)),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn notification_names_the_account_and_shows_sender_and_text() {
+        let mut core = started(TWO);
+        let effects = notify(&mut core, "b", "Alice", "hi there");
+        assert_eq!(
+            effects,
+            vec![Effect::ShowNotification {
+                account_id: "b".into(),
+                title: "Account 2".into(),
+                body: "Alice: hi there".into(),
+                sound: Sound::Default,
+            }]
+        );
+    }
+
+    #[test]
+    fn hidden_sender_hides_sender_and_text() {
+        let mut core = started(TWO);
+        core.handle(Event::NotificationSettingsChanged {
+            messages: true,
+            show_sender: false,
+            sound_enabled: true,
+            sound_path: String::new(),
+        });
+        let effects = notify(&mut core, "a", "Alice", "secret");
+        let (title, body, _) = shown(&effects).unwrap();
+        assert_eq!((title, body), ("Account 1", "New message"));
+    }
+
+    #[test]
+    fn nothing_is_shown_when_message_notifications_are_off() {
+        let mut core = started(TWO);
+        core.handle(Event::NotificationsToggled);
+        assert!(notify(&mut core, "a", "Alice", "hi").is_empty());
+        core.handle(Event::NotificationsToggled);
+        assert!(!notify(&mut core, "a", "Alice", "hi").is_empty());
+    }
+
+    #[test]
+    fn nothing_is_shown_when_the_master_switch_is_off() {
+        let mut core = started(
+            r#"{"accounts":[{"id":"a","name":"A"}],"notification_settings":{"enabled":false}}"#,
+        );
+        assert!(notify(&mut core, "a", "Alice", "hi").is_empty());
+    }
+
+    #[test]
+    fn unknown_account_gets_no_notification() {
+        let mut core = started(TWO);
+        assert!(notify(&mut core, "zz", "Alice", "hi").is_empty());
+    }
+
+    #[test]
+    fn long_title_and_body_are_cut() {
+        let mut core = started(TWO);
+        let long = "x".repeat(10_000);
+        let effects = notify(&mut core, "a", &long, &long);
+        let (_, body, _) = shown(&effects).unwrap();
+        assert_eq!(
+            body.chars().count(),
+            MAX_TITLE_CHARS + ": ".len() + MAX_BODY_CHARS
+        );
+    }
+
     #[test]
     fn close_hides_to_tray_when_enabled_and_quits_when_not() {
         let mut core = loaded_core();
@@ -1161,6 +1355,109 @@ mod tests {
             }),
             vec![Effect::ShowWindow]
         );
+    }
+
+    #[test]
+    fn cutting_never_splits_a_multibyte_character() {
+        let mut core = started(TWO);
+        let long = "\u{1F600}".repeat(MAX_BODY_CHARS + 5);
+        let effects = notify(&mut core, "a", "A", &long);
+        let (_, body, _) = shown(&effects).unwrap();
+        assert_eq!(body.chars().count(), "A: ".len() + MAX_BODY_CHARS);
+    }
+
+    #[test]
+    fn sound_follows_settings() {
+        let mut core = started(TWO);
+        let change = |core: &mut Core, on: bool, path: &str| {
+            core.handle(Event::NotificationSettingsChanged {
+                messages: true,
+                show_sender: true,
+                sound_enabled: on,
+                sound_path: path.into(),
+            });
+            notify(core, "a", "A", "b")
+        };
+        let e = change(&mut core, false, "/s.wav");
+        assert_eq!(shown(&e).unwrap().2, &Sound::Off);
+        let e = change(&mut core, true, "/s.wav");
+        assert_eq!(shown(&e).unwrap().2, &Sound::File("/s.wav".into()));
+        let e = change(&mut core, true, "");
+        assert_eq!(shown(&e).unwrap().2, &Sound::Default);
+    }
+
+    #[test]
+    fn click_focuses_window_and_activates_the_account() {
+        let mut core = started(TWO);
+        let effects = core.handle(Event::NotificationClicked {
+            account_id: "b".into(),
+        });
+        assert!(effects.contains(&Effect::FocusWindow));
+        assert!(effects.contains(&Effect::ShowAccount { id: "b".into() }));
+        assert_eq!(saved(&effects)["active_account"], "b");
+    }
+
+    #[test]
+    fn click_on_a_removed_account_does_nothing() {
+        let mut core = started(TWO);
+        assert!(core
+            .handle(Event::NotificationClicked {
+                account_id: "zz".into()
+            })
+            .is_empty());
+    }
+
+    #[test]
+    fn notification_settings_change_is_saved() {
+        let mut core = started(TWO);
+        let effects = core.handle(Event::NotificationSettingsChanged {
+            messages: false,
+            show_sender: false,
+            sound_enabled: false,
+            sound_path: "/s.wav".into(),
+        });
+        let out = saved(&effects);
+        let n = &out["notification_settings"];
+        assert_eq!(n["show_message_notifications"], false);
+        assert_eq!(n["show_sender"], false);
+        assert_eq!(n["sound_enabled"], false);
+        assert_eq!(n["sound_path"], "/s.wav");
+    }
+
+    #[test]
+    fn toggle_is_saved_and_not_saved_while_blocked() {
+        let mut core = started(TWO);
+        let out = saved(&core.handle(Event::NotificationsToggled));
+        assert_eq!(
+            out["notification_settings"]["show_message_notifications"],
+            false
+        );
+        let mut blocked = Core::default();
+        blocked.handle(Event::SettingsLoaded {
+            raw: Ok(Some("{bad".into())),
+            fresh_id: "u1".into(),
+        });
+        assert!(!has_save(&blocked.handle(Event::NotificationsToggled)));
+        assert!(!has_save(&blocked.handle(
+            Event::NotificationSettingsChanged {
+                messages: true,
+                show_sender: true,
+                sound_enabled: true,
+                sound_path: String::new(),
+            }
+        )));
+    }
+
+    #[test]
+    fn overlong_sound_path_is_rejected() {
+        let mut core = started(TWO);
+        let effects = core.handle(Event::NotificationSettingsChanged {
+            messages: true,
+            show_sender: true,
+            sound_enabled: true,
+            sound_path: "x".repeat(MAX_SOUND_PATH_CHARS + 1),
+        });
+        assert!(matches!(effects[..], [Effect::ReportError { .. }]));
     }
 
     #[test]

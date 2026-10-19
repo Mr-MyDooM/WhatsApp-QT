@@ -32,6 +32,9 @@ tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 url = "2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+mac-notification-sys = "0.6"
+
 # Windows-only: winrt-notification depends on the `windows` crate, which does not
 # build on macOS/Linux. Keep it out of non-Windows builds.
 [target.'cfg(windows)'.dependencies]
