@@ -109,7 +109,12 @@ fn main() {
                 LogicalSize::new(SIDEBAR_WIDTH, WINDOW_HEIGHT),
             )?;
 
-            let raw = settings_path().and_then(|p| std::fs::read_to_string(p).ok());
+            let raw = match settings_path().map(|p| (std::fs::read_to_string(&p), p)) {
+                None => Ok(None),
+                Some((Ok(text), _)) => Ok(Some(text)),
+                Some((Err(e), _)) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Some((Err(e), p)) => Err(format!("Could not read {}: {e}", p.display())),
+            };
             let core = Mutex::new(Core::default());
             let effects = core.lock().expect("core lock").handle(Event::SettingsLoaded {
                 raw,

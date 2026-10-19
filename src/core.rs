@@ -80,9 +80,10 @@ impl Default for Settings {
 
 #[derive(Debug)]
 pub enum Event {
-    /// `raw` is the settings file content, `None` when there is no file.
+    /// `raw` is the settings file content, `Ok(None)` when there is no file,
+    /// `Err` when the file exists but cannot be read.
     /// `fresh_id` is a new UUID, used only when no account exists yet.
-    SettingsLoaded { raw: Option<String>, fresh_id: String },
+    SettingsLoaded { raw: Result<Option<String>, String>, fresh_id: String },
 }
 
 #[derive(Debug, PartialEq)]
@@ -96,6 +97,9 @@ pub enum Effect {
 #[derive(Default)]
 pub struct Core {
     settings: Settings,
+    /// Set when the settings file exists but could not be read or parsed.
+    /// Saving would overwrite the user's file with defaults, so it is skipped.
+    save_blocked: bool,
 }
 
 impl Core {
@@ -105,17 +109,21 @@ impl Core {
         }
     }
 
-    fn load(&mut self, raw: Option<String>, fresh_id: String) -> Vec<Effect> {
+    fn load(&mut self, raw: Result<Option<String>, String>, fresh_id: String) -> Vec<Effect> {
         let mut effects = Vec::new();
-        self.settings = match raw.as_deref().map(serde_json::from_str::<Settings>) {
-            Some(Ok(s)) => s,
-            Some(Err(e)) => {
+        let parsed = raw.and_then(|r| {
+            r.map(|text| serde_json::from_str::<Settings>(&text).map_err(|e| format!("Settings file is malformed: {e}")))
+                .transpose()
+        });
+        self.settings = match parsed {
+            Ok(s) => s.unwrap_or_default(),
+            Err(message) => {
                 effects.push(Effect::ReportError {
-                    message: format!("Settings file is malformed, using defaults: {e}"),
+                    message: format!("{message}. Using defaults; the file is not changed."),
                 });
+                self.save_blocked = true;
                 Settings::default()
             }
-            None => Settings::default(),
         };
 
         let s = &mut self.settings;
@@ -140,7 +148,7 @@ impl Core {
         effects.push(Effect::ShowAccount {
             id: s.active_account.clone().expect("set above"),
         });
-        if changed {
+        if changed && !self.save_blocked {
             match serde_json::to_string_pretty(&*s) {
                 Ok(json) => effects.push(Effect::SaveSettings { json }),
                 Err(e) => effects.push(Effect::ReportError {
@@ -158,7 +166,7 @@ mod tests {
 
     fn load(raw: Option<&str>, fresh: &str) -> Vec<Effect> {
         Core::default().handle(Event::SettingsLoaded {
-            raw: raw.map(String::from),
+            raw: Ok(raw.map(String::from)),
             fresh_id: fresh.into(),
         })
     }
@@ -254,5 +262,22 @@ mod tests {
         let effects = load(Some("{not json"), "u1");
         assert!(matches!(effects[0], Effect::ReportError { .. }));
         assert!(effects.contains(&Effect::ShowAccount { id: "u1".into() }));
+    }
+
+    #[test]
+    fn malformed_file_is_not_overwritten() {
+        let effects = load(Some("{not json"), "u1");
+        assert!(!effects.iter().any(|e| matches!(e, Effect::SaveSettings { .. })));
+    }
+
+    #[test]
+    fn unreadable_file_reports_error_and_is_not_overwritten() {
+        let effects = Core::default().handle(Event::SettingsLoaded {
+            raw: Err("permission denied".into()),
+            fresh_id: "u1".into(),
+        });
+        assert!(matches!(effects[0], Effect::ReportError { .. }));
+        assert!(effects.contains(&Effect::ShowAccount { id: "u1".into() }));
+        assert!(!effects.iter().any(|e| matches!(e, Effect::SaveSettings { .. })));
     }
 }
