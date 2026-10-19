@@ -1,3 +1,4 @@
+mod avatar;
 mod core;
 #[cfg(target_os = "macos")]
 mod dock;
@@ -20,6 +21,7 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
+use crate::avatar::Avatars;
 use crate::core::{
     avatar_hue, initials, is_account_origin, theme_css, Core, Effect, Event, MenuAccount,
     NotificationBlock,
@@ -41,6 +43,8 @@ const SETTINGS_LABEL: &str = "settings";
 const ZOOM_STEP: f64 = 0.1;
 /// Replaces `window.Notification` in each account page and sends the alert to `notify`.
 const NOTIFICATION_SCRIPT: &str = include_str!("notification_shim.js");
+/// Reads the user's own avatar in each account page and sends it to `profile_picture`.
+const AVATAR_SCRIPT: &str = include_str!("avatar_shim.js");
 /// Longest wait for the cache clear at quit. The app exits after this even if WebKit is slow.
 const CACHE_CLEAR_TIMEOUT: Duration = Duration::from_secs(3);
 const AUTOSTART_FAILED_MESSAGE: &str = "Could not change start at login. The setting is unchanged.";
@@ -309,6 +313,7 @@ fn add_account_webview(
         tauri::webview::NewWindowResponse::Deny
     })
     .initialization_script(NOTIFICATION_SCRIPT)
+    .initialization_script(AVATAR_SCRIPT)
     // The unread count comes from the page title, read here on the Rust side, so the
     // remote page needs no IPC command for it.
     .on_document_title_changed(|webview, title| {
@@ -464,7 +469,14 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                     }
                 }
             }
-            Effect::DeleteAccountData { id } => delete_account_data(app, &id),
+            Effect::DeleteAccountData { id } => {
+                app.state::<Mutex<Avatars>>()
+                    .lock()
+                    .expect("avatars lock")
+                    .remove(&id);
+                emit_avatars(app);
+                delete_account_data(app, &id)
+            }
             Effect::ShowAccount { id } => show_account(app, &id),
             Effect::ApplyTheme { theme, css } => {
                 let scheme = match theme.as_str() {
@@ -979,6 +991,53 @@ fn notify(app: AppHandle, webview: tauri::Webview, title: String, body: String) 
     );
 }
 
+/// The second and last command the remote page may call. The page script sends its own
+/// avatar. The account comes from the webview label; the data URL is checked in `avatar.rs`.
+/// Calls from any other webview, or for an unknown account, are ignored.
+#[tauri::command]
+fn profile_picture(app: AppHandle, webview: tauri::Webview, data_url: String) {
+    let Some(id) = webview.label().strip_prefix(ACCOUNT_LABEL_PREFIX) else {
+        return;
+    };
+    let known = app
+        .state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .account_name(id)
+        .is_some();
+    if !known {
+        return;
+    }
+    let result = app
+        .state::<Mutex<Avatars>>()
+        .lock()
+        .expect("avatars lock")
+        .submit(id, &data_url, unix_now());
+    match result {
+        Ok(true) => emit_avatars(&app),
+        Ok(false) => {}
+        Err(e) => log::warn!("Profile picture of {id} refused: {e}"),
+    }
+}
+
+/// Local webviews only. Id to data URL; accounts without a picture are absent.
+#[tauri::command]
+fn get_avatars(avatars: tauri::State<Mutex<Avatars>>) -> serde_json::Value {
+    serde_json::json!(avatars.lock().expect("avatars lock").all())
+}
+
+fn emit_avatars(app: &AppHandle) {
+    let payload = serde_json::json!(app
+        .state::<Mutex<Avatars>>()
+        .lock()
+        .expect("avatars lock")
+        .all());
+    for label in [SIDEBAR_LABEL, SETTINGS_LABEL] {
+        // The settings window may be closed: that is not an error.
+        let _ = app.emit_to(label, "avatars", payload.clone());
+    }
+}
+
 // Allowed for the local settings webview only: see `build.rs` and `capabilities/settings.json`.
 // The system answers on its own thread, so these run on the async pool, not the main thread.
 #[tauri::command]
@@ -1416,7 +1475,9 @@ fn main() {
             set_close_to_tray,
             set_start_minimized,
             set_notifications,
-            notify
+            notify,
+            profile_picture,
+            get_avatars
         ])
         // SIZE and POSITION only: restoring VISIBLE would defeat start-minimized.
         .plugin(
@@ -1487,6 +1548,9 @@ fn main() {
             let handle = app.handle().clone();
             notify::init(handle.clone());
             app.manage(Mutex::new(Core::default()));
+            app.manage(Mutex::new(Avatars::load(
+                app.path().app_data_dir()?.join("avatars"),
+            )));
             dispatch(
                 &handle,
                 Event::SettingsLoaded {

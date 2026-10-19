@@ -6,6 +6,7 @@ version = 4
 name = "WhatsApp-QT"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "block2",
  "dirs 4.0.0",
  "env_logger",

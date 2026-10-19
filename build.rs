@@ -28,6 +28,8 @@ fn main() {
             "set_zoom",
             "set_notifications",
             "notify",
+            "profile_picture",
+            "get_avatars",
             "set_autostart",
             "set_clear_cache_on_exit",
             "set_close_to_tray",
