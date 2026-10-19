@@ -1,0 +1,115 @@
+@import "tailwindcss";
+
+/* macOS look: system font, semantic colours, Light and Dark follow the app appearance.
+   Text on window and group colours meets 4.5:1 in both themes. */
+:root {
+  color-scheme: light dark;
+  --window: #ececec;
+  --toolbar: #e2e2e2;
+  --group: #ffffff;
+  --field: #ffffff;
+  --label: #1d1d1f;
+  --secondary: #5c5c61;
+  --separator: rgba(0, 0, 0, 0.1);
+  --control: #ffffff;
+  --control-border: rgba(0, 0, 0, 0.18);
+  --segment: rgba(0, 0, 0, 0.07);
+  --switch-off: rgba(120, 120, 128, 0.32);
+  --hover: rgba(0, 0, 0, 0.07);
+  --accent: #0a60ff;
+  --accent-fg: #ffffff;
+  --danger: #c2200f;
+  --badge: #d62d20;
+  --mute: #6e6e73;
+  --sidebar-fallback: #e6e6e6;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --window: #1e1e1e;
+    --toolbar: #2b2b2b;
+    --group: #2c2c2e;
+    --field: #1c1c1e;
+    --label: #f5f5f7;
+    --secondary: #a1a1a6;
+    --separator: rgba(255, 255, 255, 0.12);
+    --control: #4a4a4d;
+    --control-border: rgba(255, 255, 255, 0.14);
+    --segment: rgba(255, 255, 255, 0.1);
+    --switch-off: rgba(120, 120, 128, 0.45);
+    --hover: rgba(255, 255, 255, 0.1);
+    --accent: #1a6ff2;
+    --danger: #ff7a70;
+    --sidebar-fallback: #2a2a2a;
+  }
+}
+/* Use the accent colour the user picked in System Settings where WebKit knows it. */
+@supports (color: AccentColor) {
+  :root {
+    --accent: AccentColor;
+    --accent-fg: AccentColorText;
+  }
+}
+
+@theme inline {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --color-window: var(--window);
+  --color-toolbar: var(--toolbar);
+  --color-group: var(--group);
+  --color-field: var(--field);
+  --color-label: var(--label);
+  --color-secondary: var(--secondary);
+  --color-separator: var(--separator);
+  --color-control: var(--control);
+  --color-control-border: var(--control-border);
+  --color-segment: var(--segment);
+  --color-switch-off: var(--switch-off);
+  --color-hover: var(--hover);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-danger: var(--danger);
+  --color-badge: var(--badge);
+  --color-mute: var(--mute);
+  --shadow-control: 0 0.5px 1px rgba(0, 0, 0, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+  --shadow-thumb: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+  --shadow-group: 0 0 0 0.5px var(--separator), 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--window);
+  color: var(--label);
+  font: 13px/1.35 var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  cursor: default;
+  user-select: none;
+  overflow: hidden;
+}
+input {
+  user-select: text;
+}
+:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 1px;
+}
+
+/* The sidebar sits on the window's vibrancy material. Without vibrancy it gets a solid colour. */
+body.sidebar {
+  background: var(--sidebar-fallback);
+}
+html.vibrant body.sidebar {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

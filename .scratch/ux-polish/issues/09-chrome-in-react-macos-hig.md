@@ -6,12 +6,12 @@
 
 **Status:** ready-for-agent
 
-- [ ] The frontend is a Vite + React + TypeScript project with Tailwind and shadcn/ui. pnpm, exact versions, lock file committed.
+- [x] The frontend is a Vite + React + TypeScript project with Tailwind and shadcn/ui. pnpm, exact versions, lock file committed.
 - [ ] `cargo tauri build` and the macOS packaging script build the frontend first. `cargo tauri dev` runs with hot reload.
 - [ ] The sidebar is translucent like the Mail or Messages sidebar, in Light and Dark.
 - [ ] Avatars, active marker, unread pill, mute mark, tooltips, arrow keys and VoiceOver names work as tickets 01 and 04 say.
 - [ ] The Settings window has a toolbar with the four panes and uses native-looking controls (switches, segmented controls, sliders).
 - [ ] The rename window and the error panel use the same components and look.
 - [ ] Animations follow `prefers-reduced-motion`. Text contrast meets 4.5:1 in both themes.
-- [ ] The strict CSP stays. The `web.whatsapp.com` origin still gets exactly one IPC command. No IPC command is added for the chrome.
-- [ ] Account logins are not touched: no QR re-scan after this change.
+- [x] The strict CSP stays. The `web.whatsapp.com` origin still gets exactly one IPC command. No IPC command is added for the chrome.
+- [x] Account logins are not touched: no QR re-scan after this change.

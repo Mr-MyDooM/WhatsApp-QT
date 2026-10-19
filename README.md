@@ -43,8 +43,13 @@ module so `QtWebEngineQuick::initialize()` can run before the app is constructed
 git clone https://github.com/yourusername/whatsapp-qt.git
 cd whatsapp-qt
 
-# Build & run
-cargo run
+# Build the chrome (needs Node and pnpm), then run
+pnpm --dir frontend install --frozen-lockfile
+pnpm --dir frontend build
+cargo run --features custom-protocol
+
+# Dev mode with hot reload for the chrome
+cargo tauri dev
 ```
 
 ---

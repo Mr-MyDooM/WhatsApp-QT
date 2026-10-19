@@ -131,3 +131,7 @@ file:/home/
 # Claude Code
 .claude/
 *.md
+
+# Frontend
+node_modules/
+/frontend/dist
