@@ -4,15 +4,13 @@ import { BellOff, PanelLeftClose, PanelLeftOpen, Pin, Plus, Settings, type Lucid
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useAvatars } from "../lib/useAvatars";
 import { cn } from "../lib/utils";
+import type { SidebarAccount, SidebarView } from "./sidebar-view";
 
 // Cmd+1 to Cmd+9 switch accounts; keep equal to MAX_SWITCH_SHORTCUTS in main.rs.
 const MAX_SHORTCUT = 9;
 const UNREAD_CAP = 99;
 // Wait before an auto-hidden sidebar hides, so a short exit does not close it.
 const HIDE_DELAY_MS = 300;
-
-type Account = { id: string; name: string; initials: string; hue: number; muted: boolean };
-type AccountsPayload = { accounts: Account[]; active: string };
 
 const rowClass =
   "relative mx-1.5 flex w-[calc(100%-12px)] items-center gap-2.5 rounded-lg px-[11px] py-[3px] text-left";
@@ -41,10 +39,8 @@ function ActionRow({ icon: Icon, label, wide, onClick }: {
 }
 
 export function Sidebar() {
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accounts, setAccounts] = useState<SidebarAccount[]>([]);
   const [active, setActive] = useState("");
-  // Unread count per account UUID; accounts with none are absent.
-  const [unread, setUnread] = useState<Record<string, number>>({});
   const [wide, setWide] = useState(false);
   const [autoHide, setAutoHide] = useState(false);
   const [shown, setShown] = useState(false);
@@ -54,11 +50,10 @@ export function Sidebar() {
   useEffect(() => {
     let stopped = false;
     const stops = Promise.all([
-      listen<AccountsPayload>("accounts", (e) => {
+      listen<SidebarView>("accounts", (e) => {
         setAccounts(e.payload.accounts);
         setActive(e.payload.active);
       }),
-      listen<Record<string, number>>("unread", (e) => setUnread(e.payload)),
       listen<boolean>("sidebar-wide", (e) => setWide(e.payload)),
       listen<boolean>("sidebar-auto-hide", (e) => {
         setAutoHide(e.payload);
@@ -119,7 +114,7 @@ export function Sidebar() {
         className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pb-2"
       >
         {accounts.map((a, i) => {
-          const count = unread[a.id];
+          const count = a.unread;
           const isActive = a.id === active;
           const badge = count ? (count > UNREAD_CAP ? `${UNREAD_CAP}+` : String(count)) : null;
           return (

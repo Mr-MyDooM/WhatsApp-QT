@@ -73,6 +73,25 @@ pub struct SettingsView {
     pub accounts: Vec<Account>,
 }
 
+/// One row of the sidebar.
+#[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
+pub struct SidebarAccount {
+    pub id: String,
+    pub name: String,
+    pub initials: String,
+    pub hue: u32,
+    pub muted: bool,
+    pub unread: u32,
+}
+
+/// What the sidebar shows: the `accounts` event payload. The TypeScript type is generated from
+/// this struct by a test, see `sidebar_view_typescript_file_is_up_to_date`.
+#[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
+pub struct SidebarView {
+    pub accounts: Vec<SidebarAccount>,
+    pub active: String,
+}
+
 /// One change from the settings window: the `update_setting` argument. One variant per setting.
 /// The TypeScript type is generated from this enum by `settings_view_typescript_file_is_up_to_date`.
 #[derive(Debug, Clone, PartialEq, Deserialize, ts_rs::TS)]
@@ -437,8 +456,7 @@ pub enum Effect {
     /// Tell the sidebar page which width mode it is in.
     EmitSidebarState,
     RenderSidebar {
-        accounts: Vec<Account>,
-        active: String,
+        view: SidebarView,
     },
     ShowNotification {
         account_id: String,
@@ -1050,7 +1068,25 @@ impl Core {
 
     fn render(&self) -> Effect {
         Effect::RenderSidebar {
-            accounts: self.settings.accounts.clone(),
+            view: self.sidebar_view(),
+        }
+    }
+
+    pub fn sidebar_view(&self) -> SidebarView {
+        SidebarView {
+            accounts: self
+                .settings
+                .accounts
+                .iter()
+                .map(|a| SidebarAccount {
+                    id: a.id.clone(),
+                    name: a.name.clone(),
+                    initials: initials(&a.name),
+                    hue: avatar_hue(&a.id),
+                    muted: a.muted,
+                    unread: self.unread.get(&a.id).copied().unwrap_or(0),
+                })
+                .collect(),
             active: self.settings.active_account.clone().unwrap_or_default(),
         }
     }
@@ -1650,21 +1686,7 @@ mod tests {
                 Effect::CreateAccountWebview { id: "a".into() },
                 Effect::CreateAccountWebview { id: "b".into() },
                 Effect::ShowAccount { id: "b".into() },
-                Effect::RenderSidebar {
-                    accounts: vec![
-                        Account {
-                            id: "a".into(),
-                            name: "A".into(),
-                            muted: false
-                        },
-                        Account {
-                            id: "b".into(),
-                            name: "B".into(),
-                            muted: false
-                        },
-                    ],
-                    active: "b".into(),
-                },
+                render(&[("a", "A"), ("b", "B")], "b"),
             ]
         );
     }
@@ -1718,6 +1740,26 @@ mod tests {
     }
 
     const TWO: &str = r#"{"accounts":[{"id":"a","name":"Account 1"},{"id":"b","name":"Account 2"}],"active_account":"a"}"#;
+
+    /// The sidebar effect for accounts with no unread chats and none muted.
+    fn render(accounts: &[(&str, &str)], active: &str) -> Effect {
+        Effect::RenderSidebar {
+            view: SidebarView {
+                accounts: accounts
+                    .iter()
+                    .map(|(id, name)| SidebarAccount {
+                        id: id.to_string(),
+                        name: name.to_string(),
+                        initials: initials(name),
+                        hue: avatar_hue(id),
+                        muted: false,
+                        unread: 0,
+                    })
+                    .collect(),
+                active: active.into(),
+            },
+        }
+    }
 
     fn has_save(effects: &[Effect]) -> bool {
         effects
@@ -1936,26 +1978,10 @@ mod tests {
                 Effect::CreateAccountWebview { id: "b".into() },
                 Effect::CreateAccountWebview { id: "c".into() },
                 Effect::ShowAccount { id: "b".into() },
-                Effect::RenderSidebar {
-                    accounts: vec![
-                        Account {
-                            id: "a".into(),
-                            name: "Account 1".into(),
-                            muted: false
-                        },
-                        Account {
-                            id: "b".into(),
-                            name: "Account 2".into(),
-                            muted: false
-                        },
-                        Account {
-                            id: "c".into(),
-                            name: "Account 3".into(),
-                            muted: false
-                        },
-                    ],
-                    active: "b".into(),
-                },
+                render(
+                    &[("a", "Account 1"), ("b", "Account 2"), ("c", "Account 3")],
+                    "b"
+                ),
             ]
         );
     }
@@ -1987,21 +2013,7 @@ mod tests {
         let effects = core.handle(Event::SidebarReady);
         assert_eq!(
             effects,
-            vec![Effect::RenderSidebar {
-                accounts: vec![
-                    Account {
-                        id: "a".into(),
-                        name: "Account 1".into(),
-                        muted: false
-                    },
-                    Account {
-                        id: "b".into(),
-                        name: "Account 2".into(),
-                        muted: false
-                    },
-                ],
-                active: "a".into(),
-            }]
+            vec![render(&[("a", "Account 1"), ("b", "Account 2")], "a")]
         );
     }
 
@@ -2685,7 +2697,7 @@ mod tests {
         assert_eq!(saved(&effects)["accounts"][0]["muted"], true);
         assert!(effects.iter().any(|e| matches!(
             e,
-            Effect::RenderSidebar { accounts, .. } if accounts[0].muted && !accounts[1].muted
+            Effect::RenderSidebar { view } if view.accounts[0].muted && !view.accounts[1].muted
         )));
         assert!(core.is_muted("a") && !core.is_muted("b"));
         assert!(notify(&mut core, "a", "Alice", "hi").is_empty());
@@ -3026,7 +3038,7 @@ mod tests {
         assert_eq!(out["accounts"][1]["id"], "b");
         assert_eq!(out["accounts"][1]["name"], "Work");
         assert!(effects.iter().any(
-            |e| matches!(e, Effect::RenderSidebar { accounts, .. } if accounts[1].name == "Work")
+            |e| matches!(e, Effect::RenderSidebar { view } if view.accounts[1].name == "Work")
         ));
         assert_eq!(core.account_name("b"), Some("Work"));
     }
@@ -3248,6 +3260,45 @@ mod tests {
         assert!(core.settings_view(0).load_error.is_some());
     }
 
+    #[test]
+    fn sidebar_view_lists_accounts_with_active_and_unread() {
+        let mut core = started(TWO);
+        title(&mut core, "b", "(3) WhatsApp");
+        let view = core.sidebar_view();
+        assert_eq!(view.active, "a");
+        assert_eq!(view.accounts.len(), 2);
+        assert_eq!(view.accounts[0].id, "a");
+        assert_eq!(view.accounts[0].initials, "A1");
+        assert_eq!(view.accounts[0].hue, avatar_hue("a"));
+        assert_eq!(view.accounts[0].unread, 0);
+        assert!(!view.accounts[0].muted);
+        assert_eq!(view.accounts[1].unread, 3);
+    }
+
+    #[test]
+    fn sidebar_view_follows_rename_and_active_switch() {
+        let mut core = started(TWO);
+        core.handle(Event::RenameAccount {
+            id: "b".into(),
+            name: "My Work".into(),
+        });
+        core.handle(Event::SwitchAccount { id: "b".into() });
+        let view = core.sidebar_view();
+        assert_eq!(view.active, "b");
+        assert_eq!(view.accounts[1].name, "My Work");
+        assert_eq!(view.accounts[1].initials, "MW");
+    }
+
+    #[test]
+    fn sidebar_view_serializes_the_names_the_sidebar_reads() {
+        let json = serde_json::to_value(started(TWO).sidebar_view()).unwrap();
+        assert_eq!(json["active"], "a");
+        let a = &json["accounts"][0];
+        for key in ["id", "name", "initials", "hue", "muted", "unread"] {
+            assert!(a.get(key).is_some(), "missing {key}");
+        }
+    }
+
     fn change(core: &mut Core, json: &str) -> Vec<Effect> {
         core.handle(Event::SettingChanged(serde_json::from_str(json).unwrap()))
     }
@@ -3370,6 +3421,27 @@ mod tests {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/frontend/src/settings/settings-view.ts"
+        );
+        let have = std::fs::read_to_string(path).unwrap_or_default();
+        if have != want {
+            std::fs::write(path, &want).unwrap();
+            panic!("{path} was out of date and is now rewritten: run the tests again");
+        }
+    }
+
+    /// Fails when the generated TypeScript file on disk was different, and writes the new file.
+    #[test]
+    fn sidebar_view_typescript_file_is_up_to_date() {
+        use ts_rs::TS;
+        let cfg = ts_rs::Config::default();
+        let want = format!(
+            "// Generated by the test `sidebar_view_typescript_file_is_up_to_date` in src/core.rs. Do not edit.\n\nexport {}\n\nexport {}\n",
+            SidebarAccount::decl(&cfg),
+            SidebarView::decl(&cfg)
+        );
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/frontend/src/sidebar/sidebar-view.ts"
         );
         let have = std::fs::read_to_string(path).unwrap_or_default();
         if have != want {
