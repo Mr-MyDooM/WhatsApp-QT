@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { BellOff, Plus } from "lucide-react";
+import { BellOff, PanelLeftClose, PanelLeftOpen, Plus, Settings, type LucideIcon } from "lucide-react";
 import { useEffect, useState, type KeyboardEvent } from "react";
 import { cn } from "../lib/utils";
 
@@ -11,11 +11,38 @@ const UNREAD_CAP = 99;
 type Account = { id: string; name: string; initials: string; hue: number; muted: boolean };
 type AccountsPayload = { accounts: Account[]; active: string };
 
+const rowClass =
+  "relative mx-1.5 flex w-[calc(100%-12px)] items-center gap-2.5 rounded-lg px-[11px] py-[3px] text-left";
+
+// Same look for the New account, Settings and Toggle buttons: icon circle, label when wide.
+function ActionRow({ icon: Icon, label, wide, onClick }: {
+  icon: LucideIcon;
+  label: string;
+  wide: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      onClick={onClick}
+      className={cn(rowClass, "group")}
+    >
+      <span className="flex size-[38px] shrink-0 items-center justify-center rounded-full bg-hover text-label transition-colors group-hover:bg-segment">
+        <Icon size={18} strokeWidth={2} aria-hidden="true" />
+      </span>
+      {wide && <span className="truncate text-label">{label}</span>}
+    </button>
+  );
+}
+
 export function Sidebar() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [active, setActive] = useState("");
   // Unread count per account UUID; accounts with none are absent.
   const [unread, setUnread] = useState<Record<string, number>>({});
+  const [wide, setWide] = useState(false);
 
   useEffect(() => {
     let stopped = false;
@@ -25,6 +52,7 @@ export function Sidebar() {
         setActive(e.payload.active);
       }),
       listen<Record<string, number>>("unread", (e) => setUnread(e.payload)),
+      listen<boolean>("sidebar-wide", (e) => setWide(e.payload)),
     ]).then((fns) => {
       // Ask for the first state only when both listeners are in place.
       if (stopped) fns.forEach((f) => f());
@@ -46,11 +74,19 @@ export function Sidebar() {
   }
 
   return (
-    <nav className="flex flex-col items-center gap-2 pt-3">
-      <div role="group" aria-label="Accounts" onKeyDown={moveFocus} className="flex flex-col items-center gap-2">
+    <nav className="flex h-full flex-col">
+      {/* Top strip: the traffic lights sit here, so they never cover an account. Drags the window. */}
+      <div data-tauri-drag-region className="h-[38px] shrink-0" />
+      <div
+        role="group"
+        aria-label="Accounts"
+        onKeyDown={moveFocus}
+        className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pb-2"
+      >
         {accounts.map((a, i) => {
           const count = unread[a.id];
           const isActive = a.id === active;
+          const badge = count ? (count > UNREAD_CAP ? `${UNREAD_CAP}+` : String(count)) : null;
           return (
             <button
               key={a.id}
@@ -59,11 +95,10 @@ export function Sidebar() {
               title={i < MAX_SHORTCUT ? `${a.name}, Cmd+${i + 1}` : a.name}
               aria-label={[a.name, a.muted && "muted", count && `${count} unread`].filter(Boolean).join(", ")}
               aria-current={isActive ? "true" : undefined}
-              style={{ backgroundColor: `hsl(${a.hue} 55% 28%)` }}
               className={cn(
-                "relative flex size-[38px] items-center justify-center rounded-full text-[14px] font-semibold text-white shadow-thumb",
-                "motion-safe:transition-transform motion-safe:hover:scale-105 motion-safe:active:scale-95",
-                isActive && "shadow-[0_0_0_2px_var(--accent)]",
+                rowClass,
+                "motion-safe:transition-transform motion-safe:active:scale-[0.98]",
+                wide && isActive && "bg-hover",
               )}
               onClick={() => invoke("switch_account", { id: a.id })}
               onContextMenu={(e) => {
@@ -72,38 +107,58 @@ export function Sidebar() {
               }}
             >
               {isActive && (
-                <span className="absolute -left-[11px] top-2.5 bottom-2.5 w-[3px] rounded-r-full bg-accent" aria-hidden="true" />
+                <span className="absolute -left-1.5 top-2.5 bottom-2.5 w-[3px] rounded-r-full bg-accent" aria-hidden="true" />
               )}
-              {a.initials}
-              {count ? (
-                <span
-                  aria-hidden="true"
-                  className="absolute -right-1.5 -top-1.5 h-[18px] min-w-[18px] rounded-full bg-badge px-1 text-center text-[11px] leading-[18px] font-semibold text-white shadow-thumb"
-                >
-                  {count > UNREAD_CAP ? `${UNREAD_CAP}+` : count}
-                </span>
-              ) : null}
-              {a.muted && (
-                <span
-                  aria-hidden="true"
-                  className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full bg-mute text-white shadow-thumb"
-                >
-                  <BellOff size={9} strokeWidth={2.5} />
-                </span>
+              <span
+                aria-hidden="true"
+                style={{ backgroundColor: `hsl(${a.hue} 55% 28%)` }}
+                className={cn(
+                  "relative flex size-[38px] shrink-0 items-center justify-center rounded-full text-[14px] font-semibold text-white shadow-thumb",
+                  isActive && "shadow-[0_0_0_2px_var(--accent)]",
+                )}
+              >
+                {a.initials}
+                {badge && !wide && (
+                  <span className="absolute -right-1.5 -top-1.5 h-[18px] min-w-[18px] rounded-full bg-badge px-1 text-center text-[11px] leading-[18px] font-semibold text-white shadow-thumb">
+                    {badge}
+                  </span>
+                )}
+                {a.muted && !wide && (
+                  <span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full bg-mute text-white shadow-thumb">
+                    <BellOff size={9} strokeWidth={2.5} />
+                  </span>
+                )}
+              </span>
+              {wide && (
+                <>
+                  <span aria-hidden="true" className="min-w-0 flex-1 truncate text-label">
+                    {a.name}
+                  </span>
+                  {a.muted && <BellOff aria-hidden="true" size={13} className="shrink-0 text-secondary" />}
+                  {badge && (
+                    <span
+                      aria-hidden="true"
+                      className="h-[18px] min-w-[18px] shrink-0 rounded-full bg-badge px-1 text-center text-[11px] leading-[18px] font-semibold text-white"
+                    >
+                      {badge}
+                    </span>
+                  )}
+                </>
               )}
             </button>
           );
         })}
+        <ActionRow icon={Plus} label="New account" wide={wide} onClick={() => invoke("add_account")} />
       </div>
-      <button
-        type="button"
-        title="New account"
-        aria-label="New account"
-        onClick={() => invoke("add_account")}
-        className="flex size-[38px] items-center justify-center rounded-full bg-hover text-label transition-colors hover:bg-segment"
-      >
-        <Plus size={18} strokeWidth={2} />
-      </button>
+      <div className="flex shrink-0 flex-col gap-1 pb-3 pt-1">
+        <ActionRow icon={Settings} label="Settings" wide={wide} onClick={() => invoke("open_settings_window")} />
+        <ActionRow
+          icon={wide ? PanelLeftClose : PanelLeftOpen}
+          label={wide ? "Hide account names" : "Show account names"}
+          wide={wide}
+          onClick={() => invoke("toggle_sidebar")}
+        />
+      </div>
     </nav>
   );
 }

@@ -24,7 +24,10 @@ use crate::core::{
     avatar_hue, initials, is_account_origin, theme_css, Core, Effect, Event, MenuAccount,
 };
 
-const SIDEBAR_WIDTH: f64 = 60.0;
+/// Avatar column. Wider than the macOS traffic lights (about 70 px), so they never reach the
+/// account page. Keep the top strip in `frontend/src/sidebar/Sidebar.tsx` for them.
+const SIDEBAR_NARROW: f64 = 72.0;
+const SIDEBAR_WIDE: f64 = 220.0;
 const WINDOW_WIDTH: f64 = 1200.0;
 const WINDOW_HEIGHT: f64 = 800.0;
 const ACCOUNT_URL: &str = "https://web.whatsapp.com";
@@ -80,10 +83,11 @@ fn show_load_error(app: &AppHandle, id: &str) {
         (Ok(size), Ok(scale)) => size.to_logical::<f64>(scale),
         _ => return,
     };
+    let sidebar = sidebar_width(app);
     let result = window.add_child(
         WebviewBuilder::new(label, WebviewUrl::App("error.html".into())),
-        LogicalPosition::new(SIDEBAR_WIDTH, 0.0),
-        LogicalSize::new((size.width - SIDEBAR_WIDTH).max(1.0), size.height),
+        LogicalPosition::new(sidebar, 0.0),
+        LogicalSize::new((size.width - sidebar).max(1.0), size.height),
     );
     if let Err(e) = result {
         eprintln!("Could not show the error panel for account {id}: {e}");
@@ -316,16 +320,15 @@ fn add_account_webview(
     let builder = builder.data_store_identifier(*uuid.as_bytes());
     #[cfg(not(target_os = "macos"))]
     let builder = builder.data_directory(account_data_dir(app, &uuid)?);
-    #[cfg(target_os = "macos")]
-    let _ = app;
 
     let size = window
         .inner_size()?
         .to_logical::<f64>(window.scale_factor()?);
+    let sidebar = sidebar_width(app);
     window.add_child(
         builder,
-        LogicalPosition::new(SIDEBAR_WIDTH, 0.0),
-        LogicalSize::new((size.width - SIDEBAR_WIDTH).max(1.0), size.height),
+        LogicalPosition::new(sidebar, 0.0),
+        LogicalSize::new((size.width - sidebar).max(1.0), size.height),
     )?;
     Ok(())
 }
@@ -352,19 +355,54 @@ fn show_account(app: &AppHandle, id: &str) {
     }
 }
 
+fn sidebar_width(app: &AppHandle) -> f64 {
+    if app
+        .state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .sidebar_wide()
+    {
+        SIDEBAR_WIDE
+    } else {
+        SIDEBAR_NARROW
+    }
+}
+
 fn layout(app: &AppHandle, window: &tauri::Window, size: tauri::PhysicalSize<u32>) {
     let size = size.to_logical::<f64>(window.scale_factor().unwrap_or(1.0));
+    let sidebar = sidebar_width(app);
     for (label, webview) in app.webviews() {
         if label == SIDEBAR_LABEL {
-            let _ = webview.set_size(LogicalSize::new(SIDEBAR_WIDTH, size.height));
+            let _ = webview.set_size(LogicalSize::new(sidebar, size.height));
         } else if label.starts_with(ACCOUNT_LABEL_PREFIX) || label.starts_with(ERROR_LABEL_PREFIX) {
-            let _ = webview.set_position(LogicalPosition::new(SIDEBAR_WIDTH, 0.0));
+            let _ = webview.set_position(LogicalPosition::new(sidebar, 0.0));
             let _ = webview.set_size(LogicalSize::new(
-                (size.width - SIDEBAR_WIDTH).max(1.0),
+                (size.width - sidebar).max(1.0),
                 size.height,
             ));
         }
     }
+}
+
+/// Tells the sidebar page which state it is in.
+fn emit_sidebar_state(app: &AppHandle) {
+    let wide = app
+        .state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .sidebar_wide();
+    if let Err(e) = app.emit_to(SIDEBAR_LABEL, "sidebar-wide", wide) {
+        eprintln!("Could not update the sidebar state: {e}");
+    }
+}
+
+fn apply_sidebar(app: &AppHandle) {
+    if let Some(window) = app.get_window("main") {
+        if let Ok(size) = window.inner_size() {
+            layout(app, &window, size);
+        }
+    }
+    emit_sidebar_state(app);
 }
 
 /// Logs the detail, and shows the friendly message on the settings page if it is open.
@@ -555,6 +593,7 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                     }
                 }
             }
+            Effect::ApplySidebar => apply_sidebar(app),
             Effect::ShowUnread { counts, total } => show_unread(app, counts, total),
         }
     }
@@ -578,6 +617,17 @@ fn new_id() -> String {
 #[tauri::command]
 fn sidebar_ready(app: AppHandle) {
     dispatch(&app, Event::SidebarReady);
+    emit_sidebar_state(&app);
+}
+
+#[tauri::command]
+fn toggle_sidebar(app: AppHandle) {
+    dispatch(&app, Event::SidebarToggled);
+}
+
+#[tauri::command]
+fn open_settings_window(app: AppHandle) {
+    open_settings(&app);
 }
 
 #[tauri::command]
@@ -1032,6 +1082,7 @@ const TRAY_SNOOZE_8H: &str = "tray-snooze-8h";
 const TRAY_END_SNOOZE: &str = "tray-end-snooze";
 const MENU_QUIT: &str = "app-quit";
 const MENU_SETTINGS: &str = "settings";
+const MENU_TOGGLE_SIDEBAR: &str = "sidebar-toggle";
 const MENU_ZOOM_IN: &str = "zoom-in";
 const MENU_ZOOM_OUT: &str = "zoom-out";
 const MENU_ZOOM_RESET: &str = "zoom-reset";
@@ -1142,6 +1193,14 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         "View",
         true,
         &[
+            &MenuItem::with_id(
+                app,
+                MENU_TOGGLE_SIDEBAR,
+                "Toggle Sidebar",
+                true,
+                Some("Ctrl+Cmd+S"),
+            )?,
+            &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, MENU_ZOOM_IN, "Zoom In", true, Some("CmdOrCtrl+="))?,
             &MenuItem::with_id(app, MENU_ZOOM_OUT, "Zoom Out", true, Some("CmdOrCtrl+-"))?,
             &MenuItem::with_id(
@@ -1198,6 +1257,7 @@ fn on_menu_event(app: &AppHandle, id: &str) {
             }
         }
         MENU_SETTINGS => open_settings(app),
+        MENU_TOGGLE_SIDEBAR => dispatch(app, Event::SidebarToggled),
         MENU_NOTIFICATIONS => dispatch(app, Event::NotificationsToggled),
         MENU_ZOOM_IN => dispatch(app, Event::ZoomStepped { delta: ZOOM_STEP }),
         MENU_ZOOM_OUT => dispatch(app, Event::ZoomStepped { delta: -ZOOM_STEP }),
@@ -1254,6 +1314,8 @@ fn main() {
         ))
         .invoke_handler(tauri::generate_handler![
             sidebar_ready,
+            toggle_sidebar,
+            open_settings_window,
             add_account,
             switch_account,
             remove_account,
@@ -1312,13 +1374,19 @@ fn main() {
                 .inner_size(WINDOW_WIDTH, WINDOW_HEIGHT)
                 .visible(false);
             // The sidebar page is transparent: the window draws the macOS sidebar material.
+            // The overlay title bar lets that material run under the traffic lights, so the
+            // window has no separate title bar strip.
             #[cfg(target_os = "macos")]
-            let builder = builder.transparent(true).effects(
-                tauri::window::EffectsBuilder::new()
-                    .effect(tauri::window::Effect::Sidebar)
-                    .state(tauri::window::EffectState::FollowsWindowActiveState)
-                    .build(),
-            );
+            let builder = builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true)
+                .transparent(true)
+                .effects(
+                    tauri::window::EffectsBuilder::new()
+                        .effect(tauri::window::Effect::Sidebar)
+                        .state(tauri::window::EffectState::FollowsWindowActiveState)
+                        .build(),
+                );
             let window = builder.build()?;
             let sidebar = WebviewBuilder::new(SIDEBAR_LABEL, WebviewUrl::App("index.html".into()));
             #[cfg(target_os = "macos")]
@@ -1326,7 +1394,7 @@ fn main() {
             window.add_child(
                 sidebar,
                 LogicalPosition::new(0.0, 0.0),
-                LogicalSize::new(SIDEBAR_WIDTH, WINDOW_HEIGHT),
+                LogicalSize::new(SIDEBAR_NARROW, WINDOW_HEIGHT),
             )?;
 
             let raw = match settings_path().map(|p| (std::fs::read_to_string(&p), p)) {
@@ -1351,6 +1419,7 @@ fn main() {
                 .expect("core lock")
                 .appearance_effects();
             run_effects(&handle, appearance);
+            apply_sidebar(&handle);
 
             build_tray(&handle)?;
             #[cfg(target_os = "macos")]
