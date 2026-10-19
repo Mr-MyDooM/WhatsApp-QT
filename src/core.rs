@@ -36,13 +36,41 @@ fn is_known_theme(theme: &str) -> bool {
     matches!(theme, "light" | "dark" | "system")
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 pub struct Account {
     pub id: String,
     pub name: String,
     /// Message notifications are silenced for this account. Old files have no field: false.
     #[serde(default)]
     pub muted: bool,
+}
+
+/// What the settings window reads: the `get_settings` reply. The TypeScript type is generated
+/// from this struct by a test, see `settings_view_typescript_file_is_up_to_date`.
+#[derive(Debug, Clone, PartialEq, Serialize, ts_rs::TS)]
+pub struct SettingsView {
+    pub theme: String,
+    pub zoom_factor: f64,
+    pub close_to_tray: bool,
+    pub sidebar_auto_hide: bool,
+    pub start_minimized: bool,
+    pub notifications: bool,
+    pub show_sender: bool,
+    pub sound_enabled: bool,
+    pub sound_path: String,
+    /// Empty means the system Downloads folder.
+    pub download_path: String,
+    pub spellcheck_enabled: bool,
+    pub autostart_enabled: bool,
+    pub clear_cache_on_exit: bool,
+    /// Only macOS can clear the cache without removing logins.
+    pub clear_cache_supported: bool,
+    /// Set when the settings file was unusable: changes are not saved then.
+    pub load_error: Option<String>,
+    /// End of the active Snooze in Unix seconds.
+    #[ts(type = "number | null")]
+    pub snooze_until: Option<u64>,
+    pub accounts: Vec<Account>,
 }
 
 /// One account line in the tray and Dock menus.
@@ -688,11 +716,6 @@ impl Core {
         }
     }
 
-    /// Why the settings file was not used, if it was not. Saving is off in that case.
-    pub fn load_error(&self) -> Option<&str> {
-        self.load_error.as_deref()
-    }
-
     pub fn is_muted(&self, id: &str) -> bool {
         self.settings.accounts.iter().any(|a| a.id == id && a.muted)
     }
@@ -727,10 +750,6 @@ impl Core {
                 },
             })
             .collect()
-    }
-
-    pub fn notification_settings(&self) -> &NotificationSettings {
-        &self.settings.notification_settings
     }
 
     fn notify(&self, account_id: &str, title: &str, body: &str, now: u64) -> Vec<Effect> {
@@ -791,28 +810,32 @@ impl Core {
         self.settings.snooze_until.filter(|&end| now < end)
     }
 
-    pub fn accounts(&self) -> &[Account] {
-        &self.settings.accounts
+    pub fn settings_view(&self, now: u64) -> SettingsView {
+        let s = &self.settings;
+        let n = &s.notification_settings;
+        SettingsView {
+            theme: s.theme.clone(),
+            zoom_factor: s.zoom_factor,
+            close_to_tray: s.close_to_tray,
+            sidebar_auto_hide: s.sidebar_auto_hide,
+            start_minimized: s.start_minimized,
+            notifications: n.show_message_notifications,
+            show_sender: n.show_sender,
+            sound_enabled: n.sound_enabled,
+            sound_path: n.sound_path.clone(),
+            download_path: s.download_path.clone(),
+            spellcheck_enabled: s.spellcheck_enabled,
+            autostart_enabled: s.autostart_enabled,
+            clear_cache_on_exit: s.clear_cache_on_exit,
+            clear_cache_supported: cfg!(target_os = "macos"),
+            load_error: self.load_error.clone(),
+            snooze_until: self.active_snooze_end(now),
+            accounts: s.accounts.clone(),
+        }
     }
 
     pub fn autostart_enabled(&self) -> bool {
         self.settings.autostart_enabled
-    }
-
-    pub fn clear_cache_on_exit(&self) -> bool {
-        self.settings.clear_cache_on_exit
-    }
-
-    pub fn theme(&self) -> &str {
-        &self.settings.theme
-    }
-
-    pub fn zoom_factor(&self) -> f64 {
-        self.settings.zoom_factor
-    }
-
-    pub fn close_to_tray(&self) -> bool {
-        self.settings.close_to_tray
     }
 
     /// Where the page starts and how wide the sidebar webview is.
@@ -853,14 +876,6 @@ impl Core {
     /// Empty means the system Downloads folder.
     pub fn download_path(&self) -> &str {
         &self.settings.download_path
-    }
-
-    pub fn spellcheck_enabled(&self) -> bool {
-        self.settings.spellcheck_enabled
-    }
-
-    pub fn start_minimized(&self) -> bool {
-        self.settings.start_minimized
     }
 
     /// The main window is built hidden; show it unless the user wants to start in the tray.
@@ -2003,7 +2018,7 @@ mod tests {
         let mut core = loaded_core();
         let effects = theme(&mut core, "neon");
         assert!(matches!(effects[..], [Effect::ReportError { .. }]));
-        assert_eq!(core.theme(), "system");
+        assert_eq!(core.settings_view(0).theme, "system");
     }
 
     #[test]
@@ -2026,7 +2041,7 @@ mod tests {
         let mut core = loaded_core();
         let effects = zoom(&mut core, f64::NAN);
         assert!(matches!(effects[..], [Effect::ReportError { .. }]));
-        assert_eq!(core.zoom_factor(), 1.0);
+        assert_eq!(core.settings_view(0).zoom_factor, 1.0);
     }
 
     #[test]
@@ -2035,9 +2050,9 @@ mod tests {
         for _ in 0..3 {
             core.handle(Event::ZoomStepped { delta: 0.1 });
         }
-        assert_eq!(core.zoom_factor(), 1.3);
+        assert_eq!(core.settings_view(0).zoom_factor, 1.3);
         core.handle(Event::ZoomStepped { delta: -0.1 });
-        assert_eq!(core.zoom_factor(), 1.2);
+        assert_eq!(core.settings_view(0).zoom_factor, 1.2);
     }
 
     #[test]
@@ -2433,7 +2448,7 @@ mod tests {
         assert!(!page_config_of(&effects).spellcheck);
         let out = saved(&effects);
         assert_eq!(out["spellcheck_enabled"], false);
-        assert!(!core.spellcheck_enabled());
+        assert!(!core.settings_view(0).spellcheck_enabled);
     }
 
     #[test]
@@ -2509,7 +2524,7 @@ mod tests {
         assert_eq!(saved(&effects)["close_to_tray"], true);
         let effects = core.handle(Event::StartMinimizedChanged { enabled: true });
         assert_eq!(saved(&effects)["start_minimized"], true);
-        assert!(core.close_to_tray() && core.start_minimized());
+        assert!(core.settings_view(0).close_to_tray && core.settings_view(0).start_minimized);
     }
 
     #[test]
@@ -2526,7 +2541,7 @@ mod tests {
         assert!(!has_save(
             &core.handle(Event::StartMinimizedChanged { enabled: true })
         ));
-        assert!(core.close_to_tray());
+        assert!(core.settings_view(0).close_to_tray);
     }
 
     fn link(url: &str) -> Vec<Effect> {
@@ -2796,7 +2811,7 @@ mod tests {
         let mut core = loaded_core();
         let effects = core.handle(Event::ClearCacheOnExitChanged { enabled: true });
         assert_eq!(saved(&effects)["clear_cache_on_exit"], true);
-        assert!(core.clear_cache_on_exit());
+        assert!(core.settings_view(0).clear_cache_on_exit);
     }
 
     #[test]
@@ -2854,7 +2869,7 @@ mod tests {
             fresh_id: "n".into(),
             debug_build: false,
         });
-        assert!(core.load_error().is_some());
+        assert!(core.settings_view(0).load_error.is_some());
         let effects = core.handle(Event::AutostartChanged { enabled: true });
         assert!(!effects
             .iter()
@@ -2864,7 +2879,7 @@ mod tests {
 
     #[test]
     fn good_settings_file_has_no_load_error() {
-        assert!(started(TWO).load_error().is_none());
+        assert!(started(TWO).settings_view(0).load_error.is_none());
     }
 
     #[test]
@@ -3133,5 +3148,72 @@ mod tests {
             fresh_id: "n".into(),
         });
         assert!(effects.contains(&Effect::HideLoadError { id: "b".into() }));
+    }
+
+    #[test]
+    fn settings_view_serializes_the_names_the_settings_window_reads() {
+        let core = started(
+            r#"{"theme":"dark","zoom_factor":1.2,"close_to_tray":true,"download_path":"/d",
+            "accounts":[{"id":"a","name":"Work","muted":true}],"active_account":"a",
+            "notification_settings":{"show_message_notifications":false,"show_sender":false,
+            "sound_enabled":false,"sound_path":"/s.wav"}}"#,
+        );
+        let json = serde_json::to_value(core.settings_view(0)).unwrap();
+        assert_eq!(json["theme"], "dark");
+        assert_eq!(json["zoom_factor"], 1.2);
+        assert_eq!(json["close_to_tray"], true);
+        assert_eq!(json["download_path"], "/d");
+        assert_eq!(json["notifications"], false);
+        assert_eq!(json["show_sender"], false);
+        assert_eq!(json["sound_enabled"], false);
+        assert_eq!(json["sound_path"], "/s.wav");
+        assert_eq!(json["clear_cache_supported"], cfg!(target_os = "macos"));
+        assert_eq!(json["load_error"], serde_json::Value::Null);
+        assert_eq!(
+            json["accounts"],
+            serde_json::json!([{"id":"a","name":"Work","muted":true}])
+        );
+    }
+
+    #[test]
+    fn settings_view_snooze_until_is_only_an_active_snooze_end() {
+        let mut core = started(TWO);
+        core.handle(Event::SnoozeSet {
+            minutes: 60,
+            now: 1000,
+        });
+        assert_eq!(core.settings_view(1000).snooze_until, Some(1000 + HOUR));
+        assert_eq!(core.settings_view(1000 + HOUR).snooze_until, None);
+    }
+
+    #[test]
+    fn settings_view_reports_a_load_error() {
+        let mut core = Core::default();
+        core.handle(Event::SettingsLoaded {
+            raw: Ok(Some("{not json".into())),
+            fresh_id: "n".into(),
+        });
+        assert!(core.settings_view(0).load_error.is_some());
+    }
+
+    /// Fails when the generated TypeScript file on disk was different, and writes the new file.
+    #[test]
+    fn settings_view_typescript_file_is_up_to_date() {
+        use ts_rs::TS;
+        let cfg = ts_rs::Config::default();
+        let want = format!(
+            "// Generated by the test `settings_view_typescript_file_is_up_to_date` in src/core.rs. Do not edit.\n\nexport {}\n\nexport {}\n",
+            Account::decl(&cfg),
+            SettingsView::decl(&cfg)
+        );
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/frontend/src/settings/settings-view.ts"
+        );
+        let have = std::fs::read_to_string(path).unwrap_or_default();
+        if have != want {
+            std::fs::write(path, &want).unwrap();
+            panic!("{path} was out of date and is now rewritten: run the tests again");
+        }
     }
 }
