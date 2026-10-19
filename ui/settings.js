@@ -8,6 +8,8 @@ const notifications = document.getElementById("notifications");
 const showSender = document.getElementById("show-sender");
 const soundEnabled = document.getElementById("sound-enabled");
 const soundPath = document.getElementById("sound-path");
+const closeToTray = document.getElementById("close-to-tray");
+const startMinimized = document.getElementById("start-minimized");
 const error = document.getElementById("error");
 
 function showZoom(factor) {
@@ -31,6 +33,10 @@ function saveNotifications() {
 for (const el of [notifications, showSender, soundEnabled, soundPath]) {
   el.addEventListener("change", saveNotifications);
 }
+closeToTray.addEventListener("change", () =>
+  invoke("set_close_to_tray", { enabled: closeToTray.checked }));
+startMinimized.addEventListener("change", () =>
+  invoke("set_start_minimized", { enabled: startMinimized.checked }));
 listen("app-error", (e) => {
   error.textContent = e.payload;
   error.hidden = false;
@@ -43,4 +49,6 @@ invoke("get_settings").then((s) => {
   showSender.checked = s.show_sender;
   soundEnabled.checked = s.sound_enabled;
   soundPath.value = s.sound_path;
+  closeToTray.checked = s.close_to_tray;
+  startMinimized.checked = s.start_minimized;
 });

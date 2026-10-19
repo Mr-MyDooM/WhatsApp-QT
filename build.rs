@@ -12,6 +12,8 @@ fn main() {
             "set_zoom",
             "set_notifications",
             "notify",
+            "set_close_to_tray",
+            "set_start_minimized",
         ]),
     ))
     .expect("failed to run tauri-build");

@@ -7,6 +7,8 @@
     "allow-get-settings",
     "allow-set-theme",
     "allow-set-zoom",
-    "allow-set-notifications"
+    "allow-set-notifications",
+    "allow-set-close-to-tray",
+    "allow-set-start-minimized"
   ]
 }

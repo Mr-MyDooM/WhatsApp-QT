@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::{PageLoadEvent, WebviewBuilder};
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Theme, WebviewUrl,
@@ -226,6 +227,19 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
             Effect::ReportError { message } => {
                 report_error(app, "Something went wrong with your settings.", &message)
             }
+            Effect::ShowWindow => {
+                if let Some(window) = app.get_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            }
+            Effect::HideWindow => {
+                if let Some(window) = app.get_window("main") {
+                    let _ = window.hide();
+                }
+            }
+            Effect::Quit => app.exit(0),
         }
     }
 }
@@ -272,6 +286,48 @@ fn remove_account(app: AppHandle, id: String) {
     );
 }
 
+fn toggle_window(app: &AppHandle) {
+    let window_visible = app
+        .get_window("main")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+    dispatch(app, Event::ToggleWindow { window_visible });
+}
+
+fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    let menu = Menu::with_items(
+        app,
+        &[
+            &MenuItem::with_id(app, TRAY_TOGGLE, "Show/Hide", true, None::<&str>)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, TRAY_QUIT, "Quit", true, None::<&str>)?,
+        ],
+    )?;
+    let mut tray = TrayIconBuilder::new()
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            TRAY_TOGGLE => toggle_window(app),
+            TRAY_QUIT => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                toggle_window(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
 fn open_settings(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(SETTINGS_LABEL) {
         let _ = w.set_focus();
@@ -312,11 +368,23 @@ fn get_settings(core: tauri::State<Mutex<Core>>) -> serde_json::Value {
     serde_json::json!({
         "theme": core.theme(),
         "zoom_factor": core.zoom_factor(),
+        "close_to_tray": core.close_to_tray(),
+        "start_minimized": core.start_minimized(),
         "notifications": n.show_message_notifications,
         "show_sender": n.show_sender,
         "sound_enabled": n.sound_enabled,
         "sound_path": n.sound_path,
     })
+}
+
+#[tauri::command]
+fn set_close_to_tray(app: AppHandle, enabled: bool) {
+    dispatch(&app, Event::CloseToTrayChanged { enabled });
+}
+
+#[tauri::command]
+fn set_start_minimized(app: AppHandle, enabled: bool) {
+    dispatch(&app, Event::StartMinimizedChanged { enabled });
 }
 
 #[tauri::command]
@@ -348,6 +416,8 @@ fn set_zoom(app: AppHandle, factor: f64) {
     dispatch(&app, Event::ZoomChanged { factor });
 }
 
+const TRAY_TOGGLE: &str = "tray-toggle";
+const TRAY_QUIT: &str = "tray-quit";
 const MENU_SETTINGS: &str = "settings";
 const MENU_ZOOM_IN: &str = "zoom-in";
 const MENU_ZOOM_OUT: &str = "zoom-out";
@@ -503,9 +573,21 @@ fn main() {
             get_settings,
             set_theme,
             set_zoom,
+            set_close_to_tray,
+            set_start_minimized,
             set_notifications,
             notify
         ])
+        // SIZE and POSITION only: restoring VISIBLE would defeat start-minimized.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION,
+                )
+                .with_denylist(&[SETTINGS_LABEL])
+                .build(),
+        )
         .menu(build_menu)
         .on_menu_event(|app, event| on_menu_event(app, event.id().as_ref()))
         .on_page_load(|webview, payload| {
@@ -526,6 +608,7 @@ fn main() {
             let window = WindowBuilder::new(app, "main")
                 .title("WhatsApp")
                 .inner_size(WINDOW_WIDTH, WINDOW_HEIGHT)
+                .visible(false)
                 .build()?;
             window.add_child(
                 WebviewBuilder::new(SIDEBAR_LABEL, WebviewUrl::App("index.html".into())),
@@ -555,11 +638,22 @@ fn main() {
                 .appearance_effects();
             run_effects(&handle, appearance);
 
+            build_tray(&handle)?;
+            let start = handle
+                .state::<Mutex<Core>>()
+                .lock()
+                .expect("core lock")
+                .start_window_effects();
+            run_effects(&handle, start);
+
             let w = window.clone();
-            window.on_window_event(move |event| {
-                if let WindowEvent::Resized(size) = event {
-                    layout(&handle, &w, *size);
+            window.on_window_event(move |event| match event {
+                WindowEvent::Resized(size) => layout(&handle, &w, *size),
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    dispatch(&handle, Event::CloseRequested);
                 }
+                _ => {}
             });
             Ok(())
         })
