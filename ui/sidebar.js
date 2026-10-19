@@ -3,6 +3,8 @@ const { listen } = window.__TAURI__.event;
 
 let accounts = [];
 let active = "";
+// Unread count per account UUID; accounts with none are absent.
+let unread = {};
 
 function confirmRemove(id) {
   const account = accounts.find((a) => a.id === id);
@@ -19,6 +21,14 @@ function render() {
       el.className = "account" + (a.id === active ? " active" : "");
       el.title = a.name;
       el.textContent = a.name;
+      const count = unread[a.id];
+      if (count) {
+        const badge = document.createElement("span");
+        badge.className = "unread";
+        badge.textContent = count > 99 ? "99+" : String(count);
+        el.title = `${a.name} (${count} unread)`;
+        el.appendChild(badge);
+      }
       el.addEventListener("click", () => invoke("switch_account", { id: a.id }));
       el.addEventListener("contextmenu", (e) => {
         e.preventDefault();
@@ -33,6 +43,10 @@ document.getElementById("add").addEventListener("click", () => invoke("add_accou
 listen("accounts", (e) => {
   accounts = e.payload.accounts;
   active = e.payload.active;
+  render();
+});
+listen("unread", (e) => {
+  unread = e.payload;
   render();
 });
 listen("remove-active", () => confirmRemove(active));

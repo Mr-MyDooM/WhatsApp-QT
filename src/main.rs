@@ -1,5 +1,6 @@
 mod core;
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -76,7 +77,15 @@ fn add_account_webview(
         account_label(id),
         WebviewUrl::External(ACCOUNT_URL.parse()?),
     )
-    .user_agent(USER_AGENT);
+    .user_agent(USER_AGENT)
+    // The unread count comes from the page title, read here on the Rust side, so the
+    // remote page needs no IPC command for it.
+    .on_document_title_changed(|webview, title| {
+        if let Some(id) = webview.label().strip_prefix(ACCOUNT_LABEL_PREFIX) {
+            let id = id.to_string();
+            dispatch(webview.app_handle(), Event::TitleChanged { id, title });
+        }
+    });
     #[cfg(target_os = "macos")]
     let builder = builder.data_store_identifier(*uuid.as_bytes());
     #[cfg(not(target_os = "macos"))]
@@ -137,6 +146,28 @@ fn inject_css(webview: &tauri::Webview, css: &str) {
          var c={literal};if(!c)return;var s=document.createElement('style');\
          s.id='app-theme-style';s.textContent=c;document.head.appendChild(s);}})();"
     ));
+}
+
+/// Sidebar gets each account's count; tray tooltip and Dock badge get the total.
+fn show_unread(app: &AppHandle, counts: BTreeMap<String, u32>, total: u32) {
+    if let Err(e) = app.emit_to(SIDEBAR_LABEL, "unread", counts) {
+        eprintln!("Could not update unread counts in the sidebar: {e}");
+    }
+    if let Some(window) = app.get_window("main") {
+        // `None` removes the badge.
+        let badge = (total > 0).then_some(i64::from(total));
+        if let Err(e) = window.set_badge_count(badge) {
+            eprintln!("Could not set the Dock badge: {e}");
+        }
+    }
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let tooltip = if total > 0 {
+            format!("{APP_NAME} ({total} unread)")
+        } else {
+            APP_NAME.to_string()
+        };
+        let _ = tray.set_tooltip(Some(tooltip));
+    }
 }
 
 fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
@@ -242,6 +273,7 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                     Err(e) => eprintln!("Could not parse chat URL: {e}"),
                 }
             }
+            Effect::ShowUnread { counts, total } => show_unread(app, counts, total),
         }
     }
 }
@@ -305,7 +337,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             &MenuItem::with_id(app, TRAY_QUIT, "Quit", true, None::<&str>)?,
         ],
     )?;
-    let mut tray = TrayIconBuilder::new()
+    let mut tray = TrayIconBuilder::with_id(TRAY_ID)
+        .tooltip(APP_NAME)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -377,6 +410,8 @@ fn set_zoom(app: AppHandle, factor: f64) {
     dispatch(&app, Event::ZoomChanged { factor });
 }
 
+const TRAY_ID: &str = "main";
+const APP_NAME: &str = "WhatsApp";
 const TRAY_TOGGLE: &str = "tray-toggle";
 const TRAY_QUIT: &str = "tray-quit";
 const MENU_SETTINGS: &str = "settings";

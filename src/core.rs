@@ -1,5 +1,7 @@
 //! Pure app core: no Tauri types. One entry point, `Core::handle`: event in, effects out.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_ACCOUNT_NAME: &str = "Account 1";
@@ -215,6 +217,11 @@ pub enum Event {
     DeepLinkOpened {
         url: String,
     },
+    /// An account webview's page title changed. Untrusted: WhatsApp Web sets it.
+    TitleChanged {
+        id: String,
+        title: String,
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -258,6 +265,11 @@ pub enum Effect {
         id: String,
         url: String,
     },
+    /// Unread count of each account that has unread chats, and the total over all accounts.
+    ShowUnread {
+        counts: BTreeMap<String, u32>,
+        total: u32,
+    },
 }
 
 #[derive(Default)]
@@ -266,6 +278,8 @@ pub struct Core {
     /// Set when the settings file exists but could not be read or parsed.
     /// Saving would overwrite the user's file with defaults, so it is skipped.
     save_blocked: bool,
+    /// Unread count per account UUID; accounts with none are absent. Not saved.
+    unread: BTreeMap<String, u32>,
 }
 
 impl Core {
@@ -293,7 +307,9 @@ impl Core {
                     .clone();
                 self.switch(&id)
             }
-            Event::SidebarReady => vec![self.render()],
+            // A fresh sidebar shows no counts, so send them only when there are some.
+            Event::SidebarReady if self.unread.is_empty() => vec![self.render()],
+            Event::SidebarReady => vec![self.render(), self.show_unread()],
             Event::ThemeChanged { theme } => self.set_theme(theme),
             Event::ZoomChanged { factor } => self.set_zoom(factor),
             Event::ZoomStepped { delta } => self.set_zoom(self.settings.zoom_factor + delta),
@@ -316,6 +332,7 @@ impl Core {
                 self.saved_effects()
             }
             Event::DeepLinkOpened { url } => self.open_deep_link(&url),
+            Event::TitleChanged { id, title } => self.set_unread(id, unread_count(&title)),
         }
     }
 
@@ -404,6 +421,29 @@ impl Core {
         }
     }
 
+    fn set_unread(&mut self, id: String, count: u32) -> Vec<Effect> {
+        let old = self.unread.get(&id).copied().unwrap_or(0);
+        if count == old || !self.settings.accounts.iter().any(|a| a.id == id) {
+            return Vec::new();
+        }
+        if count == 0 {
+            self.unread.remove(&id);
+        } else {
+            self.unread.insert(id, count);
+        }
+        vec![self.show_unread()]
+    }
+
+    fn show_unread(&self) -> Effect {
+        Effect::ShowUnread {
+            counts: self.unread.clone(),
+            total: self
+                .unread
+                .values()
+                .fold(0u32, |sum, n| sum.saturating_add(*n)),
+        }
+    }
+
     fn active_index(&self) -> usize {
         let active = self.settings.active_account.as_ref();
         self.settings
@@ -488,6 +528,9 @@ impl Core {
             id: self.settings.active_account.clone().expect("set above"),
         });
         effects.push(self.render());
+        if self.unread.remove(id).is_some() {
+            effects.push(self.show_unread());
+        }
         self.save(&mut effects);
         effects
     }
@@ -553,6 +596,16 @@ impl Core {
         }
         effects
     }
+}
+
+/// WhatsApp Web puts the unread count first in the page title: "(3) WhatsApp".
+/// Any other title, or a number that does not fit, counts as zero.
+fn unread_count(title: &str) -> u32 {
+    title
+        .strip_prefix('(')
+        .and_then(|rest| rest.split_once(')'))
+        .and_then(|(n, _)| n.parse().ok())
+        .unwrap_or(0)
 }
 
 /// Rebuilds a deep link as a web.whatsapp.com chat URL, or `None` for anything that is
@@ -1217,5 +1270,108 @@ mod tests {
                 url: "https://web.whatsapp.com/send?phone=5".into()
             }]
         );
+    }
+
+    // --- unread count ---
+
+    fn title(core: &mut Core, id: &str, title: &str) -> Vec<Effect> {
+        core.handle(Event::TitleChanged {
+            id: id.into(),
+            title: title.into(),
+        })
+    }
+
+    fn unread(pairs: &[(&str, u32)], total: u32) -> Effect {
+        Effect::ShowUnread {
+            counts: pairs.iter().map(|(id, n)| (id.to_string(), *n)).collect(),
+            total,
+        }
+    }
+
+    #[test]
+    fn title_with_count_sets_account_unread_count_and_total() {
+        let mut core = started(TWO);
+        assert_eq!(
+            title(&mut core, "a", "(3) WhatsApp"),
+            vec![unread(&[("a", 3)], 3)]
+        );
+    }
+
+    #[test]
+    fn title_without_count_clears_the_account_count() {
+        let mut core = started(TWO);
+        title(&mut core, "a", "(3) WhatsApp");
+        assert_eq!(title(&mut core, "a", "WhatsApp"), vec![unread(&[], 0)]);
+    }
+
+    #[test]
+    fn odd_titles_count_as_zero() {
+        for odd in [
+            "",
+            "WhatsApp (3)",
+            " (3) WhatsApp",
+            "(abc) WhatsApp",
+            "(-1) WhatsApp",
+            "(3.5) WhatsApp",
+            "(3 WhatsApp",
+            "()",
+            "(99999999999999999999) WhatsApp",
+        ] {
+            let mut core = started(TWO);
+            title(&mut core, "a", "(2) WhatsApp");
+            assert_eq!(title(&mut core, "a", odd), vec![unread(&[], 0)], "{odd}");
+        }
+    }
+
+    #[test]
+    fn unchanged_count_emits_nothing() {
+        let mut core = started(TWO);
+        assert!(title(&mut core, "a", "WhatsApp").is_empty());
+        title(&mut core, "a", "(1) WhatsApp");
+        assert!(title(&mut core, "a", "(1) WhatsApp - chat").is_empty());
+    }
+
+    #[test]
+    fn total_is_the_sum_over_accounts() {
+        let mut core = started(TWO);
+        title(&mut core, "a", "(3) WhatsApp");
+        assert_eq!(
+            title(&mut core, "b", "(4) WhatsApp"),
+            vec![unread(&[("a", 3), ("b", 4)], 7)]
+        );
+    }
+
+    #[test]
+    fn title_of_unknown_account_is_ignored() {
+        let mut core = started(TWO);
+        assert!(title(&mut core, "zz", "(5) WhatsApp").is_empty());
+    }
+
+    #[test]
+    fn removing_an_account_removes_its_count_from_the_total() {
+        let mut core = started(TWO);
+        title(&mut core, "a", "(3) WhatsApp");
+        title(&mut core, "b", "(4) WhatsApp");
+        let effects = core.handle(Event::RemoveAccount {
+            id: "b".into(),
+            fresh_id: "n".into(),
+        });
+        assert!(effects.contains(&unread(&[("a", 3)], 3)));
+    }
+
+    #[test]
+    fn sidebar_ready_also_sends_unread_counts() {
+        let mut core = started(TWO);
+        title(&mut core, "b", "(2) WhatsApp");
+        assert!(core
+            .handle(Event::SidebarReady)
+            .contains(&unread(&[("b", 2)], 2)));
+    }
+
+    #[test]
+    fn unread_count_is_not_saved() {
+        let mut core = started(TWO);
+        let effects = title(&mut core, "a", "(3) WhatsApp");
+        assert!(!has_save(&effects));
     }
 }
