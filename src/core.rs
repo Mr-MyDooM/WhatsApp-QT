@@ -19,6 +19,7 @@ const RETRY_MAX_SECS: u64 = 300;
 const MAX_TITLE_CHARS: usize = 100;
 const MAX_BODY_CHARS: usize = 300;
 const MAX_SOUND_PATH_CHARS: usize = 1024;
+const MAX_DOWNLOAD_PATH_CHARS: usize = 1024;
 const HIDDEN_SENDER_BODY: &str = "New message";
 const TEST_TITLE: &str = "Test";
 const TEST_BODY: &str = "This is a test notification.";
@@ -330,6 +331,13 @@ pub enum Event {
     /// The value comes from the remote page, so it is checked here.
     ChatListResized {
         width: Option<f64>,
+    },
+    /// Folder for downloads. Empty means the system Downloads folder. A relative path is refused.
+    DownloadPathChanged {
+        path: String,
+    },
+    SpellcheckChanged {
+        enabled: bool,
     },
     /// Snooze message notifications for all accounts. `now` is Unix seconds.
     SnoozeSet {
@@ -663,6 +671,24 @@ impl Core {
                 self.save(&mut effects);
                 effects
             }
+            Event::DownloadPathChanged { path } => {
+                if path.chars().count() > MAX_DOWNLOAD_PATH_CHARS {
+                    return vec![Effect::ReportError {
+                        message: "Download folder path is too long".into(),
+                    }];
+                }
+                if !path.is_empty() && !std::path::Path::new(&path).is_absolute() {
+                    return vec![Effect::ReportError {
+                        message: "Download folder must be a full path".into(),
+                    }];
+                }
+                self.settings.download_path = path;
+                self.saved_effects()
+            }
+            Event::SpellcheckChanged { enabled } => {
+                self.settings.spellcheck_enabled = enabled;
+                self.saved_effects()
+            }
             Event::DeepLinkOpened { url } => self.open_deep_link(&url),
             Event::TitleChanged { id, title } => self.set_unread(id, unread_count(&title)),
             Event::AccountDataDeleted { id, result } => match result {
@@ -823,6 +849,15 @@ impl Core {
 
     pub fn chat_list_width(&self) -> Option<f64> {
         self.settings.chat_list_width
+    }
+
+    /// Empty means the system Downloads folder.
+    pub fn download_path(&self) -> &str {
+        &self.settings.download_path
+    }
+
+    pub fn spellcheck_enabled(&self) -> bool {
+        self.settings.spellcheck_enabled
     }
 
     pub fn start_minimized(&self) -> bool {
@@ -2236,6 +2271,39 @@ mod tests {
                 sound_path: String::new(),
             }
         )));
+    }
+
+    #[test]
+    fn download_path_is_saved_and_bad_paths_are_rejected() {
+        let mut core = started(TWO);
+        assert_eq!(
+            saved(&core.handle(Event::DownloadPathChanged {
+                path: "/Volumes/Disk".into()
+            }))["download_path"],
+            "/Volumes/Disk"
+        );
+        for path in [
+            "relative/dir".to_string(),
+            "/x".repeat(MAX_DOWNLOAD_PATH_CHARS),
+        ] {
+            let effects = core.handle(Event::DownloadPathChanged { path });
+            assert!(matches!(effects[..], [Effect::ReportError { .. }]));
+        }
+        assert_eq!(core.download_path(), "/Volumes/Disk");
+        assert_eq!(
+            saved(&core.handle(Event::DownloadPathChanged {
+                path: String::new()
+            }))["download_path"],
+            ""
+        );
+    }
+
+    #[test]
+    fn spellcheck_change_is_saved() {
+        let mut core = started(TWO);
+        let out = saved(&core.handle(Event::SpellcheckChanged { enabled: false }));
+        assert_eq!(out["spellcheck_enabled"], false);
+        assert!(!core.spellcheck_enabled());
     }
 
     #[test]

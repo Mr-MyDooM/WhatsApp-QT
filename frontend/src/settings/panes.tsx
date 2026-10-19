@@ -34,6 +34,12 @@ export function GeneralPane({ s, change, patch, errorFor }: PaneProps) {
     invoke("set_zoom", { factor });
   }
 
+  function saveDownloadPath(path: string) {
+    change("download-path");
+    patch({ download_path: path });
+    invoke("set_download_path", { path });
+  }
+
   return (
     <>
       <Group>
@@ -130,6 +136,35 @@ export function GeneralPane({ s, change, patch, errorFor }: PaneProps) {
             }}
           />
         )}
+      </Group>
+      <Group>
+        <SwitchRow
+          id="spellcheck"
+          label="Spellcheck"
+          checked={s.spellcheck_enabled}
+          error={errorFor("spellcheck")}
+          onChange={(enabled) => {
+            change("spellcheck");
+            patch({ spellcheck_enabled: enabled });
+            invoke("set_spellcheck", { enabled });
+          }}
+        />
+        <Row
+          label="Download folder"
+          hint={s.download_path || "The system Downloads folder."}
+          error={errorFor("download-path")}
+        >
+          <Button
+            onClick={() =>
+              invoke<string | null>("choose_download_folder").then((path) => path && saveDownloadPath(path))
+            }
+          >
+            Choose...
+          </Button>
+          <Button disabled={!s.download_path} onClick={() => saveDownloadPath("")}>
+            Default
+          </Button>
+        </Row>
       </Group>
     </>
   );

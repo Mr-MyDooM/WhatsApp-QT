@@ -27,7 +27,7 @@ There is no CI. Verify builds locally, on macOS first. Checks before each commit
 - **`notify.rs`**: native notifications. macOS uses `UNUserNotificationCenter` (objc2); other platforms use `notify-rust`.
 - **`avatar.rs`**: account profile pictures sent by the remote page. Checks the data URL, limits the call rate, stores one file per account in the app data folder.
 - **`dock.rs`** (macOS only): the Dock menu, added to tao's app delegate at runtime.
-- **`*_shim.js`**: scripts injected into each account webview (`include_str!` in `main.rs`): notification bridge, own avatar, chat list resize.
+- **`*_shim.js`**: scripts injected into each account webview (`include_str!` in `main.rs`): notification bridge, own avatar, chat list resize, spellcheck off. A setting that changes live (chat list width, spellcheck) is sent to every account page with `eval`.
 
 ### Frontend (`frontend/`)
 
@@ -39,6 +39,7 @@ React 19, TypeScript, Tailwind and shadcn-style components, built with Vite into
 - macOS: each account uses `data_store_identifier(uuid bytes)`, stored at `~/Library/WebKit/<process name>/WebsiteDataStore/<uuid>`. The dev build process is `WhatsApp-QT`, the bundle is `dev.mj.pairline`, so dev and bundle logins are separate.
 - Other platforms: `data_directory` at `<app data>/accounts/<uuid>`.
 - Settings: `<config dir>/WhatsAppDesktop/settings.json`. Data deletes that fail go to `pending_deletions` and run again at the next start.
+- Downloads go to `download_path` (set in `on_download`). Empty or a missing folder means the system Downloads folder.
 - Never force a QR re-scan: a change that moves or resets the data store logs every account out.
 
 ### Commands and permissions
@@ -67,8 +68,6 @@ Tauri is pinned exactly (`=2.12.4`) because the `unstable` child-webview API can
 
 Each needs its own decision before work starts:
 
-- Spellcheck toggle (`spellcheck_enabled` is stored, but the system webview uses its own spellcheck).
-- Custom download path (`download_path` is stored today but nothing uses it).
 - Native Wayland on Linux (child webviews draw at wrong bounds; start with X11/XWayland via `GDK_BACKEND=x11`).
 - Repo and crate rename from WhatsApp-QT to Pairline.
 

@@ -8,6 +8,9 @@ export type SettingsData = {
   show_sender: boolean;
   sound_enabled: boolean;
   sound_path: string;
+  /** Empty means the system Downloads folder. */
+  download_path: string;
+  spellcheck_enabled: boolean;
   autostart_enabled: boolean;
   clear_cache_on_exit: boolean;
   clear_cache_supported: boolean;
@@ -28,6 +31,8 @@ export type Field =
   | "close-to-tray"
   | "sidebar-auto-hide"
   | "clear-cache"
+  | "spellcheck"
+  | "download-path"
   | "notifications"
   | "show-sender"
   | "sound-enabled"

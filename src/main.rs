@@ -5,7 +5,7 @@ mod dock;
 mod notify;
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -59,6 +59,8 @@ const NOTIFICATION_SCRIPT: &str = include_str!("notification_shim.js");
 const AVATAR_SCRIPT: &str = include_str!("avatar_shim.js");
 /// Lets the user drag the edge of WhatsApp's chat list to resize it.
 const CHAT_LIST_SCRIPT: &str = include_str!("chat_list_shim.js");
+/// Turns spellcheck off in WhatsApp's text boxes when the setting is off.
+const SPELLCHECK_SCRIPT: &str = include_str!("spellcheck_shim.js");
 /// Longest wait for the cache clear at quit. The app exits after this even if WebKit is slow.
 const CACHE_CLEAR_TIMEOUT: Duration = Duration::from_secs(3);
 const AUTOSTART_FAILED_MESSAGE: &str = "Could not change start at login. The setting is unchanged.";
@@ -319,6 +321,10 @@ fn add_account_webview(
         "window.__PAIRLINE_CHAT_LIST_WIDTH__ = {};\n{CHAT_LIST_SCRIPT}",
         serde_json::json!(chat_list_width(app))
     );
+    let spellcheck_script = format!(
+        "window.__PAIRLINE_SPELLCHECK__ = {};\n{SPELLCHECK_SCRIPT}",
+        spellcheck_enabled(app)
+    );
     let builder = WebviewBuilder::new(
         account_label(id),
         WebviewUrl::External(ACCOUNT_URL.parse()?),
@@ -344,6 +350,16 @@ fn add_account_webview(
     .initialization_script(NOTIFICATION_SCRIPT)
     .initialization_script(AVATAR_SCRIPT)
     .initialization_script(&chat_list_script)
+    .initialization_script(&spellcheck_script)
+    .on_download(|webview, event| {
+        if let tauri::webview::DownloadEvent::Requested { destination, .. } = event {
+            let dir = download_path(webview.app_handle());
+            if let Some(path) = download_destination(&dir, destination) {
+                *destination = path;
+            }
+        }
+        true
+    })
     // The unread count comes from the page title, read here on the Rust side, so the
     // remote page needs no IPC command for it.
     .on_document_title_changed(|webview, title| {
@@ -1230,6 +1246,8 @@ fn get_settings(core: tauri::State<Mutex<Core>>) -> serde_json::Value {
         "show_sender": n.show_sender,
         "sound_enabled": n.sound_enabled,
         "sound_path": n.sound_path,
+        "download_path": core.download_path(),
+        "spellcheck_enabled": core.spellcheck_enabled(),
         "autostart_enabled": core.autostart_enabled(),
         "clear_cache_on_exit": core.clear_cache_on_exit(),
         // Only macOS can clear the cache without removing logins.
@@ -1267,6 +1285,85 @@ fn chat_list_width(app: &AppHandle) -> Option<f64> {
         .lock()
         .expect("core lock")
         .chat_list_width()
+}
+
+/// Opens the system folder picker for downloads. Returns the path, or nothing if cancelled.
+#[tauri::command]
+async fn choose_download_folder(app: AppHandle) -> Option<String> {
+    app.dialog()
+        .file()
+        .blocking_pick_folder()
+        .and_then(|f| f.into_path().ok())
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn set_download_path(app: AppHandle, path: String) {
+    dispatch(&app, Event::DownloadPathChanged { path });
+}
+
+fn download_path(app: &AppHandle) -> String {
+    app.state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .download_path()
+        .to_string()
+}
+
+/// Where a download goes when the user chose a folder. `wry_default` is the path WebKit
+/// picked in the system Downloads folder. `None` keeps it: no folder is set, or the folder
+/// is missing (for example an unplugged disk).
+/// ponytail: wry_default can already end in " (1)" from a clash in ~/Downloads; strip it if
+/// users notice.
+fn download_destination(dir: &str, wry_default: &Path) -> Option<PathBuf> {
+    if dir.is_empty() {
+        return None;
+    }
+    let dir = Path::new(dir);
+    if !dir.is_dir() {
+        eprintln!(
+            "Download folder {} is missing. The file goes to the system Downloads folder.",
+            dir.display()
+        );
+        return None;
+    }
+    let name = wry_default.file_name()?;
+    let mut path = dir.join(name);
+    // Never overwrite a file: add " (1)", " (2)" and so on, as WebKit does.
+    let stem = Path::new(name).file_stem()?.to_string_lossy().into_owned();
+    let ext = Path::new(name)
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let mut n = 1;
+    while path.exists() {
+        path = dir.join(format!("{stem} ({n}){ext}"));
+        n += 1;
+    }
+    Some(path)
+}
+
+#[tauri::command]
+fn set_spellcheck(app: AppHandle, enabled: bool) {
+    dispatch(&app, Event::SpellcheckChanged { enabled });
+    let js = format!(
+        "window.__pairlineSetSpellcheck && window.__pairlineSetSpellcheck({})",
+        spellcheck_enabled(&app)
+    );
+    for (label, account) in app.webviews() {
+        if label.starts_with(ACCOUNT_LABEL_PREFIX) {
+            if let Err(e) = account.eval(&js) {
+                eprintln!("Could not change spellcheck in {label}: {e}");
+            }
+        }
+    }
+}
+
+fn spellcheck_enabled(app: &AppHandle) -> bool {
+    app.state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .spellcheck_enabled()
 }
 
 #[tauri::command]
@@ -1624,6 +1721,9 @@ fn main() {
             set_close_to_tray,
             set_sidebar_auto_hide,
             set_chat_list_width,
+            choose_download_folder,
+            set_download_path,
+            set_spellcheck,
             set_start_minimized,
             set_notifications,
             notify,
@@ -1770,4 +1870,30 @@ fn main() {
                 _ => {}
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn download_goes_to_the_chosen_folder_without_overwriting() {
+        let dir = std::env::temp_dir().join(format!("pairline-dl-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let default = Path::new("/Users/x/Downloads/photo.jpg");
+        let d = dir.to_str().unwrap();
+        assert_eq!(
+            download_destination(d, default),
+            Some(dir.join("photo.jpg"))
+        );
+        std::fs::write(dir.join("photo.jpg"), "").unwrap();
+        assert_eq!(
+            download_destination(d, default),
+            Some(dir.join("photo (1).jpg"))
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+        // Missing folder or no folder set: keep WebKit's path in ~/Downloads.
+        assert_eq!(download_destination(d, default), None);
+        assert_eq!(download_destination("", default), None);
+    }
 }
