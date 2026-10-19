@@ -1,7 +1,9 @@
 mod core;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::webview::{PageLoadEvent, WebviewBuilder};
@@ -9,6 +11,7 @@ use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Theme, WebviewUrl,
     WebviewWindowBuilder, WindowBuilder, WindowEvent,
 };
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 use crate::core::{theme_css, Core, Effect, Event};
 
@@ -21,6 +24,9 @@ const SIDEBAR_LABEL: &str = "sidebar";
 const MAX_SWITCH_SHORTCUTS: usize = 9;
 const SETTINGS_LABEL: &str = "settings";
 const ZOOM_STEP: f64 = 0.1;
+/// Longest wait for the cache clear at quit. The app exits after this even if WebKit is slow.
+const CACHE_CLEAR_TIMEOUT: Duration = Duration::from_secs(3);
+const AUTOSTART_FAILED_MESSAGE: &str = "Could not change start at login. The setting is unchanged.";
 const SAVE_FAILED_MESSAGE: &str =
     "Could not save your settings. The change is active until you quit the app.";
 /// WhatsApp Web rejects the default WKWebView user agent ("works with Safari 15+").
@@ -41,6 +47,97 @@ fn account_data_dir(app: &AppHandle, uuid: &uuid::Uuid) -> tauri::Result<PathBuf
         .app_data_dir()?
         .join("accounts")
         .join(uuid.to_string()))
+}
+
+/// Removes only the disk and memory cache of one account. Cookies, local storage and
+/// IndexedDB stay, so the login survives. Sends `()` once when the clear is done or failed.
+#[cfg(target_os = "macos")]
+fn clear_account_cache(webview: &tauri::Webview, done: std::sync::mpsc::Sender<()>) {
+    use block2::RcBlock;
+    use objc2_foundation::{NSDate, NSSet};
+    use objc2_web_kit::{WKWebView, WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache};
+
+    let tx = done.clone();
+    let queued = webview.with_webview(move |platform| {
+        // SAFETY: `inner()` is the live WKWebView of this account. This closure runs on the
+        // main thread, and the webview is not closed before the app exits.
+        unsafe {
+            let view = &*(platform.inner() as *const WKWebView);
+            let store = view.configuration().websiteDataStore();
+            let types =
+                NSSet::from_slice(&[WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache]);
+            let since = NSDate::dateWithTimeIntervalSince1970(0.0);
+            let handler = RcBlock::new(move || {
+                let _ = tx.send(());
+            });
+            store.removeDataOfTypes_modifiedSince_completionHandler(&types, &since, &handler);
+        }
+    });
+    if let Err(e) = queued {
+        eprintln!("Could not clear cache: {e}");
+        let _ = done.send(());
+    }
+}
+
+/// Starts the cache clear for each id and returns how many completions to wait for.
+/// Always 0 off macOS: there is no way to clear the cache there without removing logins.
+fn clear_account_caches(
+    app: &AppHandle,
+    ids: &[String],
+    done: &std::sync::mpsc::Sender<()>,
+) -> usize {
+    #[cfg(target_os = "macos")]
+    {
+        let mut pending = 0;
+        for id in ids {
+            if let Some(webview) = app.get_webview(&account_label(id)) {
+                clear_account_cache(&webview, done.clone());
+                pending += 1;
+            }
+        }
+        pending
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, ids, done);
+        0
+    }
+}
+
+/// Runs on quit. If a clear is pending, holds the exit until it is done or the timeout hits.
+fn on_exit_requested(app: &AppHandle, api: &tauri::ExitRequestApi) {
+    static HANDLED: AtomicBool = AtomicBool::new(false);
+    if HANDLED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let effects = app
+        .state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .handle(Event::QuitRequested);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut pending = 0;
+    for effect in effects {
+        if let Effect::ClearAccountCaches { ids } = effect {
+            pending += clear_account_caches(app, &ids, &tx);
+        }
+    }
+    if pending == 0 {
+        return;
+    }
+    api.prevent_exit();
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + CACHE_CLEAR_TIMEOUT;
+        for _ in 0..pending {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if rx.recv_timeout(left).is_err() {
+                eprintln!("Cache clear did not finish in time; quitting anyway");
+                break;
+            }
+        }
+        app.exit(0);
+    });
 }
 
 /// Deletes the account's data store for good. The account webview is already closed.
@@ -183,6 +280,24 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                     }
                 }
             }
+            Effect::SetAutostart { enabled } => {
+                let manager = app.autolaunch();
+                let result = if enabled {
+                    manager.enable()
+                } else {
+                    manager.disable()
+                };
+                if let Err(e) = result {
+                    report_error(
+                        app,
+                        AUTOSTART_FAILED_MESSAGE,
+                        &format!("Could not set start at login to {enabled}: {e}"),
+                    );
+                    dispatch(app, Event::AutostartFailed { enabled: !enabled });
+                }
+            }
+            // Handled in `on_exit_requested`: it must hold the exit until the clear is done.
+            Effect::ClearAccountCaches { .. } => {}
             Effect::RenderSidebar { accounts, active } => {
                 let payload = serde_json::json!({ "accounts": accounts, "active": active });
                 if let Err(e) = app.emit_to(SIDEBAR_LABEL, "accounts", payload) {
@@ -263,7 +378,7 @@ fn open_settings(app: &AppHandle) {
     let result =
         WebviewWindowBuilder::new(app, SETTINGS_LABEL, WebviewUrl::App("settings.html".into()))
             .title("Settings")
-            .inner_size(420.0, 300.0)
+            .inner_size(420.0, 380.0)
             .build();
     if let Err(e) = result {
         eprintln!("Could not open settings window: {e}");
@@ -274,7 +389,14 @@ fn open_settings(app: &AppHandle) {
 #[tauri::command]
 fn get_settings(core: tauri::State<Mutex<Core>>) -> serde_json::Value {
     let core = core.lock().expect("core lock");
-    serde_json::json!({ "theme": core.theme(), "zoom_factor": core.zoom_factor() })
+    serde_json::json!({
+        "theme": core.theme(),
+        "zoom_factor": core.zoom_factor(),
+        "autostart_enabled": core.autostart_enabled(),
+        "clear_cache_on_exit": core.clear_cache_on_exit(),
+        // Only macOS can clear the cache without removing logins.
+        "clear_cache_supported": cfg!(target_os = "macos"),
+    })
 }
 
 #[tauri::command]
@@ -285,6 +407,16 @@ fn set_theme(app: AppHandle, theme: String) {
 #[tauri::command]
 fn set_zoom(app: AppHandle, factor: f64) {
     dispatch(&app, Event::ZoomChanged { factor });
+}
+
+#[tauri::command]
+fn set_autostart(app: AppHandle, enabled: bool) {
+    dispatch(&app, Event::AutostartChanged { enabled });
+}
+
+#[tauri::command]
+fn set_clear_cache_on_exit(app: AppHandle, enabled: bool) {
+    dispatch(&app, Event::ClearCacheOnExitChanged { enabled });
 }
 
 const MENU_SETTINGS: &str = "settings";
@@ -424,6 +556,10 @@ fn on_menu_event(app: &AppHandle, id: &str) {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            None,
+        ))
         .invoke_handler(tauri::generate_handler![
             sidebar_ready,
             add_account,
@@ -431,7 +567,9 @@ fn main() {
             remove_account,
             get_settings,
             set_theme,
-            set_zoom
+            set_zoom,
+            set_autostart,
+            set_clear_cache_on_exit
         ])
         .menu(build_menu)
         .on_menu_event(|app, event| on_menu_event(app, event.id().as_ref()))
@@ -490,6 +628,11 @@ fn main() {
             });
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running WhatsApp-QT");
+        .build(tauri::generate_context!())
+        .expect("error while building WhatsApp-QT")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                on_exit_requested(app, &api);
+            }
+        });
 }

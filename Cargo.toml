@@ -28,6 +28,16 @@ notify-rust = "4.0"
 log = "0.4"
 env_logger = "0.11"
 
+tauri-plugin-autostart = "2.6.0"
+
+# macOS-only: the cache clear on quit calls WKWebsiteDataStore directly, because
+# Tauri only offers clear_all_browsing_data, which also removes logins. Versions match
+# the ones wry already pulls in, so Cargo.lock gains no new crate.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSDate", "NSSet", "NSString"] }
+objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKWebsiteDataRecord"] }
+
 # Windows-only: winrt-notification depends on the `windows` crate, which does not
 # build on macOS/Linux. Keep it out of non-Windows builds.
 [target.'cfg(windows)'.dependencies]
