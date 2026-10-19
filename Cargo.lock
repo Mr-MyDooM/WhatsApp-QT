@@ -12,6 +12,7 @@ dependencies = [
  "env_logger",
  "futures",
  "log",
+ "mac-notification-sys",
  "notify-rust",
  "rand",
  "serde",

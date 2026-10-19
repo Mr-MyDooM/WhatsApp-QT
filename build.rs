@@ -10,6 +10,8 @@ fn main() {
             "get_settings",
             "set_theme",
             "set_zoom",
+            "set_notifications",
+            "notify",
             "set_close_to_tray",
             "set_start_minimized",
         ]),
