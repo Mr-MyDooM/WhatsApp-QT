@@ -15,7 +15,7 @@ const PREFIXES: [(&str, &[u8]); 2] = [
 /// Largest decoded picture. The page script sends a 96x96 JPEG of about 5 KB.
 const MAX_BYTES: usize = 64 * 1024;
 /// Smallest time between two calls of one account. Every call counts, accepted or not.
-const MIN_CALL_GAP_SECS: u64 = 10;
+const MIN_CALL_GAP_SECS: u64 = 10; // Keep below POLL_MS in avatar_shim.js.
 
 /// Accepts only a small JPEG or PNG data URL whose bytes decode and start with the right
 /// magic number. Returns the same string, so it can be stored as it is.

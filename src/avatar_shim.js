@@ -1,17 +1,24 @@
 (function () {
   if (window.__TAURI_INTERNALS__ === undefined) return;
   // The user's OWN avatar: the last picture in the left rail header (older pages: the
-  // header of #side). The rail also holds other pictures, such as the Meta AI icon, above it.
+  // header of #side). The rail also holds WhatsApp's own icons, such as Meta AI, which come
+  // from STATIC_HOST and are skipped. The own picture can load after them.
   // Chat list and chat header pictures belong to other people and must never match.
   // WhatsApp can change its page at any time. When nothing matches, this does nothing and
   // the app shows colored initials.
+  var STATIC_HOST = "://static.whatsapp.net/";
+  // Longer than MIN_CALL_GAP_SECS in avatar.rs. A faster call is dropped there, and this
+  // script does not send the same picture again.
+  var POLL_MS = 11000;
   function findOwnAvatar() {
     var old = document.querySelector("#side > header img");
     if (old) return old;
     var headers = document.querySelectorAll("header");
     for (var i = 0; i < headers.length; i++) {
       if (headers[i].closest("#main, #side")) continue;
-      var imgs = headers[i].querySelectorAll("img");
+      var imgs = Array.prototype.filter.call(headers[i].querySelectorAll("img"), function (img) {
+        return img.src.indexOf(STATIC_HOST) === -1;
+      });
       return imgs.length ? imgs[imgs.length - 1] : null;
     }
     return null;
@@ -56,5 +63,5 @@
     if (!src || src === seen) return;
     seen = src;
     send(img);
-  }, 5000);
+  }, POLL_MS);
 })();
