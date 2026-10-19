@@ -17,7 +17,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 dirs = "4.0"
 # Exact pin: the `unstable` child-webview API can change in a minor release.
-tauri = { version = "=2.12.4", features = ["unstable", "tray-icon"] }
+tauri = { version = "=2.12.4", features = ["unstable", "tray-icon", "macos-private-api"] }
 tauri-plugin-window-state = "2"
 uuid = { version = "1", features = ["v4"] }
 notify-rust = "4.0"
@@ -33,6 +33,10 @@ tauri-plugin-opener = "2"
 # macOS-only: the cache clear on quit calls WKWebsiteDataStore directly, because
 # Tauri only offers clear_all_browsing_data, which also removes logins. Versions match
 # the ones wry already pulls in, so Cargo.lock gains no new crate.
+[features]
+# Serve the built frontend/dist instead of build.devUrl. `cargo tauri build` turns it on.
+custom-protocol = ["tauri/custom-protocol"]
+
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
 objc2 = "0.6"

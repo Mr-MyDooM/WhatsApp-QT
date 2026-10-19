@@ -710,7 +710,7 @@ fn open_rename(app: &AppHandle, id: &str) {
     let path = format!("rename.html?{}", url.query().unwrap_or_default());
     let result = WebviewWindowBuilder::new(app, RENAME_LABEL, WebviewUrl::App(path.into()))
         .title("Rename account")
-        .inner_size(360.0, 140.0)
+        .inner_size(380.0, 150.0)
         .resizable(false)
         .build();
     if let Err(e) = result {
@@ -903,7 +903,7 @@ fn open_settings(app: &AppHandle) {
     let result =
         WebviewWindowBuilder::new(app, SETTINGS_LABEL, WebviewUrl::App("settings.html".into()))
             .title("General")
-            .inner_size(480.0, 420.0)
+            .inner_size(560.0, 500.0)
             .build();
     if let Err(e) = result {
         eprintln!("Could not open settings window: {e}");
@@ -1307,13 +1307,24 @@ fn main() {
             let _ = webview.set_zoom(zoom);
         })
         .setup(|app| {
-            let window = WindowBuilder::new(app, "main")
+            let builder = WindowBuilder::new(app, "main")
                 .title("Pairline")
                 .inner_size(WINDOW_WIDTH, WINDOW_HEIGHT)
-                .visible(false)
-                .build()?;
+                .visible(false);
+            // The sidebar page is transparent: the window draws the macOS sidebar material.
+            #[cfg(target_os = "macos")]
+            let builder = builder.transparent(true).effects(
+                tauri::window::EffectsBuilder::new()
+                    .effect(tauri::window::Effect::Sidebar)
+                    .state(tauri::window::EffectState::FollowsWindowActiveState)
+                    .build(),
+            );
+            let window = builder.build()?;
+            let sidebar = WebviewBuilder::new(SIDEBAR_LABEL, WebviewUrl::App("index.html".into()));
+            #[cfg(target_os = "macos")]
+            let sidebar = sidebar.transparent(true);
             window.add_child(
-                WebviewBuilder::new(SIDEBAR_LABEL, WebviewUrl::App("index.html".into())),
+                sidebar,
                 LogicalPosition::new(0.0, 0.0),
                 LogicalSize::new(SIDEBAR_WIDTH, WINDOW_HEIGHT),
             )?;
