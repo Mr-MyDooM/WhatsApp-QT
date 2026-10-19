@@ -1,24 +1,10 @@
-import type { SettingsView } from "./settings-view";
+import type { SettingChange, SettingsView } from "./settings-view";
 
 /** Shape of the `get_settings` reply, generated from Rust. */
 export type SettingsData = SettingsView;
 
 /** Names the control a save error shows under. */
-export type Field =
-  | "theme"
-  | "zoom"
-  | "autostart"
-  | "start-minimized"
-  | "close-to-tray"
-  | "sidebar-auto-hide"
-  | "clear-cache"
-  | "spellcheck"
-  | "download-path"
-  | "notifications"
-  | "show-sender"
-  | "sound-enabled"
-  | "sound-path"
-  | "accounts";
+export type Field = SettingChange["field"] | "accounts";
 
 export type PaneProps = {
   s: SettingsData;

@@ -23,3 +23,5 @@ load_error: string | null,
  * End of the active Snooze in Unix seconds.
  */
 snooze_until: number | null, accounts: Array<Account>, };
+
+export type SettingChange = { "field": "theme", "value": string } | { "field": "zoom", "value": number } | { "field": "autostart", "value": boolean } | { "field": "start_minimized", "value": boolean } | { "field": "close_to_tray", "value": boolean } | { "field": "sidebar_auto_hide", "value": boolean } | { "field": "clear_cache_on_exit", "value": boolean } | { "field": "spellcheck", "value": boolean } | { "field": "download_path", "value": string } | { "field": "show_messages", "value": boolean } | { "field": "show_sender", "value": boolean } | { "field": "sound_enabled", "value": boolean } | { "field": "sound_path", "value": string };

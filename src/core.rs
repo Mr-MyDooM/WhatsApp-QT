@@ -73,6 +73,26 @@ pub struct SettingsView {
     pub accounts: Vec<Account>,
 }
 
+/// One change from the settings window: the `update_setting` argument. One variant per setting.
+/// The TypeScript type is generated from this enum by `settings_view_typescript_file_is_up_to_date`.
+#[derive(Debug, Clone, PartialEq, Deserialize, ts_rs::TS)]
+#[serde(tag = "field", content = "value", rename_all = "snake_case")]
+pub enum SettingChange {
+    Theme(String),
+    Zoom(f64),
+    Autostart(bool),
+    StartMinimized(bool),
+    CloseToTray(bool),
+    SidebarAutoHide(bool),
+    ClearCacheOnExit(bool),
+    Spellcheck(bool),
+    DownloadPath(String),
+    ShowMessages(bool),
+    ShowSender(bool),
+    SoundEnabled(bool),
+    SoundPath(String),
+}
+
 /// One account line in the tray and Dock menus.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MenuAccount {
@@ -221,6 +241,8 @@ pub enum Event {
     SwitchRelative(i32),
     /// The sidebar page loaded and wants the current list.
     SidebarReady,
+    /// The settings window changed one setting.
+    SettingChanged(SettingChange),
     ThemeChanged {
         theme: String,
     },
@@ -533,6 +555,7 @@ impl Core {
             // A fresh sidebar shows no counts, so send them only when there are some.
             Event::SidebarReady if self.unread.is_empty() => vec![self.render()],
             Event::SidebarReady => vec![self.render(), self.show_unread()],
+            Event::SettingChanged(change) => self.apply_change(change),
             Event::ThemeChanged { theme } => self.set_theme(theme),
             Event::ZoomChanged { factor } => self.set_zoom(factor),
             Event::ZoomStepped { delta } => self.set_zoom(self.settings.zoom_factor + delta),
@@ -876,6 +899,38 @@ impl Core {
         } else {
             vec![Effect::ShowWindow]
         }
+    }
+
+    fn apply_change(&mut self, change: SettingChange) -> Vec<Effect> {
+        let n = &self.settings.notification_settings;
+        let (messages, show_sender, sound_enabled) =
+            (n.show_message_notifications, n.show_sender, n.sound_enabled);
+        let sound_path = n.sound_path.clone();
+        let notifications =
+            |messages, show_sender, sound_enabled, sound_path| Event::NotificationSettingsChanged {
+                messages,
+                show_sender,
+                sound_enabled,
+                sound_path,
+            };
+        let event = match change {
+            SettingChange::Theme(theme) => Event::ThemeChanged { theme },
+            SettingChange::Zoom(factor) => Event::ZoomChanged { factor },
+            SettingChange::Autostart(enabled) => Event::AutostartChanged { enabled },
+            SettingChange::StartMinimized(enabled) => Event::StartMinimizedChanged { enabled },
+            SettingChange::CloseToTray(enabled) => Event::CloseToTrayChanged { enabled },
+            SettingChange::SidebarAutoHide(enabled) => Event::SidebarAutoHideChanged { enabled },
+            SettingChange::ClearCacheOnExit(enabled) => Event::ClearCacheOnExitChanged { enabled },
+            SettingChange::Spellcheck(enabled) => Event::SpellcheckChanged { enabled },
+            SettingChange::DownloadPath(path) => Event::DownloadPathChanged { path },
+            SettingChange::ShowMessages(v) => {
+                notifications(v, show_sender, sound_enabled, sound_path)
+            }
+            SettingChange::ShowSender(v) => notifications(messages, v, sound_enabled, sound_path),
+            SettingChange::SoundEnabled(v) => notifications(messages, show_sender, v, sound_path),
+            SettingChange::SoundPath(v) => notifications(messages, show_sender, sound_enabled, v),
+        };
+        self.handle(event)
     }
 
     fn saved_effects(&self) -> Vec<Effect> {
@@ -3117,15 +3172,124 @@ mod tests {
         assert!(core.settings_view(0).load_error.is_some());
     }
 
+    fn change(core: &mut Core, json: &str) -> Vec<Effect> {
+        core.handle(Event::SettingChanged(serde_json::from_str(json).unwrap()))
+    }
+
+    #[test]
+    fn every_setting_change_updates_the_view_and_saves() {
+        let mut core = started(TWO);
+        let cases: [(&str, &str, serde_json::Value); 13] = [
+            (
+                r#"{"field":"theme","value":"dark"}"#,
+                "theme",
+                "dark".into(),
+            ),
+            (r#"{"field":"zoom","value":1.5}"#, "zoom_factor", 1.5.into()),
+            (
+                r#"{"field":"autostart","value":true}"#,
+                "autostart_enabled",
+                true.into(),
+            ),
+            (
+                r#"{"field":"start_minimized","value":true}"#,
+                "start_minimized",
+                true.into(),
+            ),
+            (
+                r#"{"field":"close_to_tray","value":true}"#,
+                "close_to_tray",
+                true.into(),
+            ),
+            (
+                r#"{"field":"sidebar_auto_hide","value":true}"#,
+                "sidebar_auto_hide",
+                true.into(),
+            ),
+            (
+                r#"{"field":"clear_cache_on_exit","value":true}"#,
+                "clear_cache_on_exit",
+                true.into(),
+            ),
+            (
+                r#"{"field":"spellcheck","value":true}"#,
+                "spellcheck_enabled",
+                true.into(),
+            ),
+            (
+                r#"{"field":"download_path","value":"/d"}"#,
+                "download_path",
+                "/d".into(),
+            ),
+            (
+                r#"{"field":"show_messages","value":false}"#,
+                "notifications",
+                false.into(),
+            ),
+            (
+                r#"{"field":"show_sender","value":false}"#,
+                "show_sender",
+                false.into(),
+            ),
+            (
+                r#"{"field":"sound_enabled","value":false}"#,
+                "sound_enabled",
+                false.into(),
+            ),
+            (
+                r#"{"field":"sound_path","value":"/s.wav"}"#,
+                "sound_path",
+                "/s.wav".into(),
+            ),
+        ];
+        for (input, key, want) in cases {
+            let effects = change(&mut core, input);
+            assert_eq!(
+                serde_json::to_value(core.settings_view(0)).unwrap()[key],
+                want,
+                "{input}"
+            );
+            assert!(
+                effects
+                    .iter()
+                    .any(|e| matches!(e, Effect::SaveSettings { .. })),
+                "{input} did not save"
+            );
+        }
+    }
+
+    #[test]
+    fn one_notification_change_keeps_the_other_notification_fields() {
+        let mut core = started(TWO);
+        change(&mut core, r#"{"field":"sound_path","value":"/s.wav"}"#);
+        change(&mut core, r#"{"field":"show_sender","value":false}"#);
+        let view = core.settings_view(0);
+        assert_eq!(view.sound_path, "/s.wav");
+        assert!(view.notifications && view.sound_enabled && !view.show_sender);
+    }
+
+    #[test]
+    fn bad_setting_change_input_does_not_deserialize() {
+        for bad in [
+            r#"{"field":"zoom","value":"big"}"#,
+            r#"{"field":"theme","value":true}"#,
+            r#"{"field":"nope","value":true}"#,
+            r#"{"field":"autostart"}"#,
+        ] {
+            assert!(serde_json::from_str::<SettingChange>(bad).is_err(), "{bad}");
+        }
+    }
+
     /// Fails when the generated TypeScript file on disk was different, and writes the new file.
     #[test]
     fn settings_view_typescript_file_is_up_to_date() {
         use ts_rs::TS;
         let cfg = ts_rs::Config::default();
         let want = format!(
-            "// Generated by the test `settings_view_typescript_file_is_up_to_date` in src/core.rs. Do not edit.\n\nexport {}\n\nexport {}\n",
+            "// Generated by the test `settings_view_typescript_file_is_up_to_date` in src/core.rs. Do not edit.\n\nexport {}\n\nexport {}\n\nexport {}\n",
             Account::decl(&cfg),
-            SettingsView::decl(&cfg)
+            SettingsView::decl(&cfg),
+            SettingChange::decl(&cfg)
         );
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
