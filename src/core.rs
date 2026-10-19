@@ -104,6 +104,13 @@ pub struct Account {
     pub name: String,
 }
 
+/// One account line in the tray and Dock menus.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MenuAccount {
+    pub id: String,
+    pub label: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NotificationSettings {
@@ -618,6 +625,22 @@ impl Core {
             .accounts
             .get(self.active_index())
             .map(|a| a.id.as_str())
+    }
+
+    /// One entry per account for the tray and Dock menus, in sidebar order.
+    /// The label is the account name, plus the unread count when it is above 0.
+    pub fn menu_accounts(&self) -> Vec<MenuAccount> {
+        self.settings
+            .accounts
+            .iter()
+            .map(|a| MenuAccount {
+                id: a.id.clone(),
+                label: match self.unread.get(&a.id) {
+                    Some(n) if *n > 0 => format!("{} ({n})", a.name),
+                    _ => a.name.clone(),
+                },
+            })
+            .collect()
     }
 
     pub fn notification_settings(&self) -> &NotificationSettings {
@@ -1298,6 +1321,50 @@ mod tests {
             account_id: "zz".into(),
         });
         assert_eq!(effects, vec![Effect::ShowWindow]);
+    }
+
+    fn menu(core: &Core) -> Vec<(String, String)> {
+        core.menu_accounts()
+            .into_iter()
+            .map(|m| (m.id, m.label))
+            .collect()
+    }
+
+    #[test]
+    fn menu_lists_accounts_in_order_with_unread_counts_above_zero() {
+        let mut core = started(TWO);
+        assert_eq!(
+            menu(&core),
+            vec![
+                ("a".to_string(), "Account 1".to_string()),
+                ("b".to_string(), "Account 2".to_string())
+            ]
+        );
+        title(&mut core, "b", "(4) WhatsApp");
+        assert_eq!(menu(&core)[0].1, "Account 1");
+        assert_eq!(menu(&core)[1].1, "Account 2 (4)");
+        title(&mut core, "b", "WhatsApp");
+        assert_eq!(menu(&core)[1].1, "Account 2");
+    }
+
+    #[test]
+    fn menu_follows_rename_add_and_remove() {
+        let mut core = started(TWO);
+        core.handle(Event::RenameAccount {
+            id: "a".into(),
+            name: "Work".into(),
+        });
+        assert_eq!(menu(&core)[0].1, "Work");
+        core.handle(Event::AddAccount {
+            fresh_id: "c".into(),
+        });
+        assert_eq!(menu(&core).len(), 3);
+        core.handle(Event::RemoveAccount {
+            id: "a".into(),
+            fresh_id: "d".into(),
+        });
+        let ids: Vec<_> = menu(&core).into_iter().map(|m| m.0).collect();
+        assert_eq!(ids, ["b", "c"]);
     }
 
     #[test]
