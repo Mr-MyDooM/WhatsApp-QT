@@ -1250,30 +1250,8 @@ fn open_repository() {
 }
 
 #[tauri::command]
-fn get_settings(core: tauri::State<Mutex<Core>>) -> serde_json::Value {
-    let core = core.lock().expect("core lock");
-    let n = core.notification_settings();
-    serde_json::json!({
-        "theme": core.theme(),
-        "zoom_factor": core.zoom_factor(),
-        "close_to_tray": core.close_to_tray(),
-        "sidebar_auto_hide": core.sidebar_auto_hide(),
-        "start_minimized": core.start_minimized(),
-        "notifications": n.show_message_notifications,
-        "show_sender": n.show_sender,
-        "sound_enabled": n.sound_enabled,
-        "sound_path": n.sound_path,
-        "download_path": core.download_path(),
-        "spellcheck_enabled": core.spellcheck_enabled(),
-        "autostart_enabled": core.autostart_enabled(),
-        "clear_cache_on_exit": core.clear_cache_on_exit(),
-        // Only macOS can clear the cache without removing logins.
-        "clear_cache_supported": cfg!(target_os = "macos"),
-        // Set when the settings file was unusable: changes are not saved then.
-        "load_error": core.load_error(),
-        "snooze_until": core.active_snooze_end(unix_now()),
-        "accounts": core.accounts(),
-    })
+fn get_settings(core: tauri::State<Mutex<Core>>) -> core::SettingsView {
+    core.lock().expect("core lock").settings_view(unix_now())
 }
 
 /// The user dragged the edge of the chat list in an account page. `None` is WhatsApp's own

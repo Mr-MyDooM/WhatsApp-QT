@@ -31,6 +31,7 @@ url = "2"
 tauri-plugin-autostart = "2.6.0"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+ts-rs = "12.0.1"
 
 [features]
 # Serve the built frontend/dist instead of build.devUrl. `cargo tauri build` turns it on.

@@ -1,26 +1,7 @@
-export type SettingsAccount = { id: string; name: string };
+import type { SettingsView } from "./settings-view";
 
-/** Shape of the `get_settings` reply. */
-export type SettingsData = {
-  theme: string;
-  zoom_factor: number;
-  notifications: boolean;
-  show_sender: boolean;
-  sound_enabled: boolean;
-  sound_path: string;
-  /** Empty means the system Downloads folder. */
-  download_path: string;
-  spellcheck_enabled: boolean;
-  autostart_enabled: boolean;
-  clear_cache_on_exit: boolean;
-  clear_cache_supported: boolean;
-  close_to_tray: boolean;
-  sidebar_auto_hide: boolean;
-  start_minimized: boolean;
-  snooze_until: number | null;
-  accounts: SettingsAccount[];
-  load_error: string | null;
-};
+/** Shape of the `get_settings` reply, generated from Rust. */
+export type SettingsData = SettingsView;
 
 /** Names the control a save error shows under. */
 export type Field =
