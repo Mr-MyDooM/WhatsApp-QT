@@ -1797,21 +1797,53 @@ mod tests {
 
         let built = list_after(&build_rs, ".commands(&[");
         let handled = list_after(main_rs, "generate_handler![");
+        let mut problems = Vec::new();
         let mut granted: Vec<(String, String)> = Vec::new(); // (permission, file)
         for entry in std::fs::read_dir(root.join("capabilities")).unwrap() {
             let path = entry.unwrap().path();
-            let json: serde_json::Value =
-                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
             let file = path.file_name().unwrap().to_string_lossy().into_owned();
-            for perm in json["permissions"].as_array().unwrap() {
-                let perm = perm.as_str().unwrap();
-                if perm.starts_with("allow-") {
-                    granted.push((perm.to_string(), file.clone()));
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("capabilities/{file} cannot be read: {e}"));
+            let json: serde_json::Value = serde_json::from_str(&text)
+                .unwrap_or_else(|e| panic!("capabilities/{file} is not valid JSON: {e}"));
+            let Some(perms) = json["permissions"].as_array() else {
+                problems.push(format!("capabilities/{file} has no `permissions` array"));
+                continue;
+            };
+            for perm in perms {
+                // An entry is a plain identifier or an object with an `identifier` key.
+                let id = perm.as_str().or_else(|| perm["identifier"].as_str());
+                match id {
+                    Some(id) if id.starts_with("allow-") => {
+                        granted.push((id.to_string(), file.clone()));
+                    }
+                    Some(_) => {}
+                    None => problems.push(format!(
+                        "capabilities/{file} has a permission entry without an identifier: {perm}"
+                    )),
                 }
             }
         }
 
-        let mut problems = Vec::new();
+        // The remote WhatsApp page is untrusted: it gets exactly these commands.
+        let mut remote: Vec<&str> = granted
+            .iter()
+            .filter(|(_, file)| file == "remote.json")
+            .map(|(perm, _)| perm.as_str())
+            .collect();
+        remote.sort_unstable();
+        if remote
+            != [
+                "allow-notify",
+                "allow-profile-picture",
+                "allow-set-chat-list-width",
+            ]
+        {
+            problems.push(format!(
+                "capabilities/remote.json grants {remote:?}, expected only allow-notify, allow-profile-picture, allow-set-chat-list-width"
+            ));
+        }
+
         for name in &built {
             if !handled.contains(name) {
                 problems.push(format!(
