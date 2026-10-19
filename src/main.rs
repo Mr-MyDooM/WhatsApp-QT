@@ -22,6 +22,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use crate::core::{
     avatar_hue, initials, is_account_origin, theme_css, Core, Effect, Event, MenuAccount,
+    NotificationBlock,
 };
 
 /// Avatar column. Wider than the macOS traffic lights (about 70 px), so they never reach the
@@ -998,6 +999,80 @@ fn open_notification_settings() {
     }
 }
 
+/// Sends one test message notification. Returns "sent", or the reason no alert will come:
+/// "off", "snoozed", "muted", "denied" or "no_bundle".
+#[tauri::command]
+async fn send_test_notification(app: AppHandle) -> &'static str {
+    let now = unix_now();
+    let block = app
+        .state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .notification_block(now);
+    match block {
+        Some(NotificationBlock::Off) => return "off",
+        Some(NotificationBlock::Snoozed) => return "snoozed",
+        Some(NotificationBlock::Muted) => return "muted",
+        None => {}
+    }
+    // "not_asked" still sends: the system asks the user when the alert is shown.
+    let permission = notify::permission_status();
+    if permission == "denied" || permission == "no_bundle" {
+        return permission;
+    }
+    let target = app.clone();
+    let _ =
+        app.run_on_main_thread(move || dispatch(&target, Event::TestNotificationRequested { now }));
+    "sent"
+}
+
+/// Snoozes message notifications. Returns the end time in Unix seconds, like the tray items.
+#[tauri::command]
+fn snooze_notifications(app: AppHandle, minutes: u64) -> Option<u64> {
+    snooze(&app, minutes);
+    app.state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .active_snooze_end(unix_now())
+}
+
+#[tauri::command]
+fn end_snooze(app: AppHandle) {
+    dispatch(&app, Event::SnoozeCleared);
+}
+
+/// Opens the system file picker for a sound file. Returns the path, or nothing if cancelled.
+/// Blocks until the user answers, so it runs on the async pool.
+#[tauri::command]
+async fn choose_sound_file(app: AppHandle) -> Option<String> {
+    app.dialog()
+        .file()
+        .add_filter("Sound files", &["aiff", "wav", "mp3", "m4a", "caf"])
+        .blocking_pick_file()
+        .and_then(|f| f.into_path().ok())
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn get_about() -> serde_json::Value {
+    serde_json::json!({
+        "name": APP_NAME,
+        "version": env!("CARGO_PKG_VERSION"),
+        "description": "An unofficial desktop client for WhatsApp Web.",
+        "license": env!("CARGO_PKG_LICENSE"),
+        "repository": env!("CARGO_PKG_REPOSITORY"),
+        "settings_path": settings_path().map(|p| p.display().to_string()),
+    })
+}
+
+/// The only link the About pane opens. The page cannot choose the address.
+#[tauri::command]
+fn open_repository() {
+    if let Err(e) = tauri_plugin_opener::open_url(env!("CARGO_PKG_REPOSITORY"), None::<&str>) {
+        eprintln!("Could not open the repository page: {e}");
+    }
+}
+
 #[tauri::command]
 fn get_settings(core: tauri::State<Mutex<Core>>) -> serde_json::Value {
     let core = core.lock().expect("core lock");
@@ -1328,6 +1403,12 @@ fn main() {
             notification_permission,
             request_notification_permission,
             open_notification_settings,
+            send_test_notification,
+            snooze_notifications,
+            end_snooze,
+            choose_sound_file,
+            get_about,
+            open_repository,
             set_theme,
             set_zoom,
             set_autostart,

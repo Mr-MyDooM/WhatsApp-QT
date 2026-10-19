@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { getName, getVersion } from "@tauri-apps/api/app";
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "../components/ui/button";
@@ -150,6 +149,15 @@ const PERMISSION_BUTTONS: Record<string, [label: string, command: string]> = {
   denied: ["Open System Settings", "open_notification_settings"],
 };
 
+const TEST_RESULTS: Record<string, string> = {
+  sent: "Test notification sent.",
+  off: "No alert came. Message notifications are off.",
+  snoozed: "No alert came. Snooze is on.",
+  muted: "No alert came. The active account is muted.",
+  denied: "No alert came. Notifications are not allowed for this app.",
+  no_bundle: "No alert came. Alerts work only in the installed app.",
+};
+
 export function NotificationsPane({
   s,
   change,
@@ -171,6 +179,18 @@ export function NotificationsPane({
   }
   const button = PERMISSION_BUTTONS[permission];
   const snooze = s.snooze_until ? "On until " + new Date(s.snooze_until * 1000).toLocaleString() : "Off";
+  const [testResult, setTestResult] = useState("");
+
+  // Used by the Choose and Default buttons. An empty path means the default sound.
+  function saveSound(path: string) {
+    change("sound-path");
+    setSoundPath(path);
+    patch({ sound_path: path });
+    save({ path });
+  }
+  function startSnooze(minutes: number) {
+    invoke<number | null>("snooze_notifications", { minutes }).then((end) => patch({ snooze_until: end }));
+  }
 
   return (
     <>
@@ -228,6 +248,12 @@ export function NotificationsPane({
           hint="Leave empty for the default sound."
           error={errorFor("sound-path")}
         >
+          <Button onClick={() => invoke<string | null>("choose_sound_file").then((path) => path && saveSound(path))}>
+            Choose...
+          </Button>
+          <Button disabled={!s.sound_path} onClick={() => saveSound("")}>
+            Default
+          </Button>
           <Input
             id="sound-path"
             className="w-56"
@@ -244,8 +270,29 @@ export function NotificationsPane({
         </Row>
       </Group>
       <Group>
-        <Row label="Snooze">
-          <span className="text-secondary">{snooze}</span>
+        <Row label="Test" hint={testResult}>
+          <Button
+            onClick={() =>
+              invoke<string>("send_test_notification").then((r) => setTestResult(TEST_RESULTS[r] ?? TEST_RESULTS.sent))
+            }
+          >
+            Send Test Notification
+          </Button>
+        </Row>
+      </Group>
+      <Group>
+        <Row label="Snooze" hint={snooze}>
+          <Button onClick={() => startSnooze(60)}>Snooze 1 hour</Button>
+          <Button onClick={() => startSnooze(8 * 60)}>Snooze 8 hours</Button>
+          <Button
+            disabled={!s.snooze_until}
+            onClick={() => {
+              invoke("end_snooze");
+              patch({ snooze_until: null });
+            }}
+          >
+            End Snooze
+          </Button>
         </Row>
       </Group>
     </>
@@ -285,18 +332,45 @@ export function AccountsPane({ s, change, errorFor }: PaneProps) {
   );
 }
 
+type About = {
+  name: string;
+  version: string;
+  description: string;
+  license: string;
+  repository: string;
+  settings_path: string | null;
+};
+
 export function AboutPane() {
-  const [name, setName] = useState("");
-  const [version, setVersion] = useState("");
+  const [about, setAbout] = useState<About | null>(null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
-    getName().then(setName);
-    getVersion().then(setVersion);
+    invoke<About>("get_about").then(setAbout, () => setFailed(true));
   }, []);
   return (
     <div className="flex flex-col items-center gap-1 pt-6 text-center">
       <img src="/icon.png" alt="" width={96} height={96} className="mb-2 drop-shadow-md" />
-      <h1 className="text-xl font-semibold">{name}</h1>
-      <p className="text-secondary">Version {version}</p>
+      <h1 className="text-xl font-semibold">{about?.name ?? "Pairline"}</h1>
+      {failed && (
+        <p role="alert" className="text-xs text-danger">
+          Could not load the app details.
+        </p>
+      )}
+      {about && (
+        <>
+          <p className="text-secondary">Version {about.version}</p>
+          <p className="mt-2 text-label">{about.description}</p>
+          <div className="mt-2 flex items-center gap-2">
+            <Button onClick={() => invoke("open_repository")}>Repository</Button>
+            <span className="text-secondary">{about.license} licence</span>
+          </div>
+          {about.settings_path && (
+            <p className="mt-4 max-w-96 break-all text-xs text-secondary select-text">
+              Settings file: {about.settings_path}
+            </p>
+          )}
+        </>
+      )}
       <p className="mt-4 max-w-72 text-xs text-secondary">Not affiliated with or endorsed by WhatsApp or Meta.</p>
     </div>
   );
