@@ -154,6 +154,8 @@ pub struct Settings {
     pub clear_cache_on_exit: bool,
     pub start_minimized: bool,
     pub close_to_tray: bool,
+    /// Sidebar shows names and counts (wide) or the avatar column only.
+    pub sidebar_wide: bool,
     pub zoom_factor: f64,
     pub spellcheck_enabled: bool,
     pub window_width: i32,
@@ -178,6 +180,7 @@ impl Default for Settings {
             clear_cache_on_exit: false,
             start_minimized: false,
             close_to_tray: false,
+            sidebar_wide: false,
             zoom_factor: 1.0,
             spellcheck_enabled: true,
             window_width: 0,
@@ -307,6 +310,8 @@ pub enum Event {
     StartMinimizedChanged {
         enabled: bool,
     },
+    /// Toggle button or View menu item: switch between the wide sidebar and the avatar column.
+    SidebarToggled,
     /// Snooze message notifications for all accounts. `now` is Unix seconds.
     SnoozeSet {
         minutes: u64,
@@ -393,6 +398,8 @@ pub enum Effect {
     ClearAccountCaches {
         ids: Vec<String>,
     },
+    /// The sidebar width changed: lay out the webviews and tell the sidebar page.
+    ApplySidebar,
     RenderSidebar {
         accounts: Vec<Account>,
         active: String,
@@ -609,6 +616,12 @@ impl Core {
                 self.settings.start_minimized = enabled;
                 self.saved_effects()
             }
+            Event::SidebarToggled => {
+                self.settings.sidebar_wide = !self.settings.sidebar_wide;
+                let mut effects = vec![Effect::ApplySidebar];
+                self.save(&mut effects);
+                effects
+            }
             Event::DeepLinkOpened { url } => self.open_deep_link(&url),
             Event::TitleChanged { id, title } => self.set_unread(id, unread_count(&title)),
             Event::AccountDataDeleted { id, result } => match result {
@@ -757,6 +770,10 @@ impl Core {
 
     pub fn close_to_tray(&self) -> bool {
         self.settings.close_to_tray
+    }
+
+    pub fn sidebar_wide(&self) -> bool {
+        self.settings.sidebar_wide
     }
 
     pub fn start_minimized(&self) -> bool {
@@ -1235,12 +1252,41 @@ mod tests {
         assert_eq!(out["clear_cache_on_exit"], false);
         assert_eq!(out["start_minimized"], false);
         assert_eq!(out["close_to_tray"], false);
+        // Missing sidebar field: avatar column.
+        assert_eq!(out["sidebar_wide"], false);
         assert_eq!(
             (out["window_width"].as_i64(), out["window_height"].as_i64()),
             (Some(0), Some(0))
         );
         // Old tab fields are dropped.
         assert!(out.get("tabs").is_none() && out.get("current_tab").is_none());
+    }
+
+    #[test]
+    fn sidebar_toggle_flips_applies_and_saves_the_state() {
+        let mut core = Core::default();
+        core.handle(Event::SettingsLoaded {
+            raw: Ok(None),
+            fresh_id: "u1".into(),
+        });
+        assert!(!core.sidebar_wide());
+        let effects = core.handle(Event::SidebarToggled);
+        assert!(core.sidebar_wide());
+        assert_eq!(effects[0], Effect::ApplySidebar);
+        assert_eq!(saved(&effects)["sidebar_wide"], true);
+        let effects = core.handle(Event::SidebarToggled);
+        assert!(!core.sidebar_wide());
+        assert_eq!(saved(&effects)["sidebar_wide"], false);
+    }
+
+    #[test]
+    fn saved_wide_sidebar_loads_wide() {
+        let mut core = Core::default();
+        core.handle(Event::SettingsLoaded {
+            raw: Ok(Some(r#"{"sidebar_wide": true}"#.into())),
+            fresh_id: "u1".into(),
+        });
+        assert!(core.sidebar_wide());
     }
 
     #[test]
