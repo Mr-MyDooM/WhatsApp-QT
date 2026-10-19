@@ -27,6 +27,9 @@ blocking = "1.6.2"
 notify-rust = "4.0"
 log = "0.4"
 env_logger = "0.11"
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+url = "2"
 
 # Windows-only: winrt-notification depends on the `windows` crate, which does not
 # build on macOS/Linux. Keep it out of non-Windows builds.

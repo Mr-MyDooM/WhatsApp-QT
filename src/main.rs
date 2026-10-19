@@ -9,6 +9,7 @@ use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Theme, WebviewUrl,
     WebviewWindowBuilder, WindowBuilder, WindowEvent,
 };
+use tauri_plugin_deep_link::DeepLinkExt;
 
 use crate::core::{theme_css, Core, Effect, Event};
 
@@ -208,6 +209,24 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
             }
             Effect::ReportError { message } => {
                 report_error(app, "Something went wrong with your settings.", &message)
+            }
+            Effect::OpenChat { id, url } => {
+                if let Some(window) = app.get_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+                let Some(webview) = app.get_webview(&account_label(&id)) else {
+                    continue;
+                };
+                match url.parse() {
+                    Ok(url) => {
+                        if let Err(e) = webview.navigate(url) {
+                            eprintln!("Could not open chat in account {id}: {e}");
+                        }
+                    }
+                    Err(e) => eprintln!("Could not parse chat URL: {e}"),
+                }
             }
         }
     }
@@ -422,8 +441,18 @@ fn on_menu_event(app: &AppHandle, id: &str) {
     }
 }
 
+fn dispatch_deep_links(app: &AppHandle, urls: impl IntoIterator<Item = String>) {
+    for url in urls {
+        dispatch(app, Event::DeepLinkOpened { url });
+    }
+}
+
 fn main() {
     tauri::Builder::default()
+        // First, so a second copy hands its link to the running one and exits.
+        // The `deep-link` feature turns the second copy's argv into an on_open_urls call.
+        .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
+        .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(tauri::generate_handler![
             sidebar_ready,
             add_account,
@@ -481,6 +510,17 @@ fn main() {
                 .expect("core lock")
                 .appearance_effects();
             run_effects(&handle, appearance);
+
+            // Link that launched the app (argv on Linux and Windows, Apple Event on macOS),
+            // then links that arrive while it runs.
+            let links = app.deep_link();
+            if let Some(urls) = links.get_current()? {
+                dispatch_deep_links(&handle, urls.iter().map(|u| u.to_string()));
+            }
+            let link_handle = handle.clone();
+            links.on_open_url(move |event| {
+                dispatch_deep_links(&link_handle, event.urls().iter().map(|u| u.to_string()));
+            });
 
             let w = window.clone();
             window.on_window_event(move |event| {
