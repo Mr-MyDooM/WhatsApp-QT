@@ -23,8 +23,8 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use crate::avatar::Avatars;
 use crate::core::{
-    avatar_hue, initials, is_account_origin, theme_css, Core, Effect, Event, MenuAccount,
-    NotificationBlock,
+    avatar_hue, initials, is_account_origin, is_whatsapp_frame_origin, theme_css, Core, Effect,
+    Event, MenuAccount, NotificationBlock,
 };
 
 /// Avatar column. Wider than the macOS traffic lights (about 70 px), so they never reach the
@@ -305,9 +305,10 @@ fn add_account_webview(
     )
     .user_agent(USER_AGENT)
     // Only WhatsApp Web itself loads in the account webview. Links to other sites open
-    // in the default browser.
+    // in the default browser. This check also runs for frames, so WhatsApp's own frame
+    // hosts load in place.
     .on_navigation(|url| {
-        if is_account_origin(url) {
+        if is_account_origin(url) || is_whatsapp_frame_origin(url) {
             return true;
         }
         open_in_browser(url);

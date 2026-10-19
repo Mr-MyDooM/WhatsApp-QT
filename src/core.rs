@@ -1125,6 +1125,14 @@ pub fn is_account_origin(url: &url::Url) -> bool {
     url.scheme() == "https" && url.host_str() == Some("web.whatsapp.com") && url.port().is_none()
 }
 
+/// True for the WhatsApp hosts that WhatsApp Web loads in its own frames (flows.whatsapp.net,
+/// webtp.whatsapp.net). The navigation check also runs for frames, so these must load in place.
+pub fn is_whatsapp_frame_origin(url: &url::Url) -> bool {
+    url.scheme() == "https"
+        && url.port().is_none()
+        && url.host_str().is_some_and(|h| h.ends_with(".whatsapp.net"))
+}
+
 /// Avatar letters: one word gives one letter, more words give the first letters of the first two.
 pub fn initials(name: &str) -> String {
     name.split_whitespace()
@@ -2570,6 +2578,17 @@ mod tests {
         assert!(!ok("https://web.whatsapp.com.evil.com/"));
         assert!(!ok("https://example.com/"));
         assert!(!ok("https://web.whatsapp.com:8443/"));
+    }
+
+    #[test]
+    fn only_https_whatsapp_net_subdomains_are_frame_origins() {
+        let ok = |u: &str| is_whatsapp_frame_origin(&url::Url::parse(u).unwrap());
+        assert!(ok("https://flows.whatsapp.net/flows/cache_management/"));
+        assert!(ok("https://webtp.whatsapp.net/pdf-viewer/?locale=en_GB"));
+        assert!(!ok("http://flows.whatsapp.net/"));
+        assert!(!ok("https://whatsapp.net.evil.com/"));
+        assert!(!ok("https://evilwhatsapp.net/"));
+        assert!(!ok("https://flows.whatsapp.net:8443/"));
     }
 
     #[test]
