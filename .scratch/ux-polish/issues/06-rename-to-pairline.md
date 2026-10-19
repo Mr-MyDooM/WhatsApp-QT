@@ -9,9 +9,9 @@
 **Note:** this must land before the cut to main (`.scratch/tauri-rewrite/issues/10`). Users scan the QR code again at the cut, so a bundle ID change after it would make them scan a second time. ADR 0001 says the path and format of `settings.json` do not change: keep the `WhatsAppDesktop` settings path.
 
 - [ ] The user sees "Pairline" in every place where the app shows its own name.
-- [ ] The bundle ID and app ID are changed. All places that use the ID agree (config, deep link registration, autostart, packaging).
-- [ ] The `settings.json` path is not changed. Existing settings still load.
-- [ ] The new icon has no WhatsApp phone-in-bubble shape and no WhatsApp green.
-- [ ] The "not affiliated" line is in the bundle description and the About pane.
+- [x] The bundle ID and app ID are changed. All places that use the ID agree (config, deep link registration, autostart, packaging).
+- [x] The `settings.json` path is not changed. Existing settings still load.
+- [x] The new icon has no WhatsApp phone-in-bubble shape and no WhatsApp green.
+- [x] The "not affiliated" line is in the bundle description and the About pane.
 - [ ] Deep links and autostart still work in the bundled .app after the change.
 - [ ] Ask the user before renaming the Git repository or the crate. Those are outside the app's visible name.

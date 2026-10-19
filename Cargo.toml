@@ -38,6 +38,7 @@ block2 = "0.6"
 objc2 = "0.6"
 objc2-user-notifications = "0.3.2"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSBundle", "NSDate", "NSDictionary", "NSError", "NSObject", "NSSet", "NSString", "NSValue"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSMenu", "NSMenuItem", "NSResponder"] }
 objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKWebsiteDataRecord"] }
 
 # Windows-only: winrt-notification depends on the `windows` crate, which does not

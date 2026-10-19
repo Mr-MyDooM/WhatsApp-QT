@@ -107,6 +107,13 @@ pub struct Account {
     pub muted: bool,
 }
 
+/// One account line in the tray and Dock menus.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MenuAccount {
+    pub id: String,
+    pub label: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NotificationSettings {
@@ -632,6 +639,22 @@ impl Core {
             .map(|a| a.id.as_str())
     }
 
+    /// One entry per account for the tray and Dock menus, in sidebar order.
+    /// The label is the account name, plus the unread count when it is above 0.
+    pub fn menu_accounts(&self) -> Vec<MenuAccount> {
+        self.settings
+            .accounts
+            .iter()
+            .map(|a| MenuAccount {
+                id: a.id.clone(),
+                label: match self.unread.get(&a.id) {
+                    Some(n) if *n > 0 => format!("{} ({n})", a.name),
+                    _ => a.name.clone(),
+                },
+            })
+            .collect()
+    }
+
     pub fn notification_settings(&self) -> &NotificationSettings {
         &self.settings.notification_settings
     }
@@ -641,7 +664,7 @@ impl Core {
         let Some(account) = self.settings.accounts.iter().find(|a| a.id == account_id) else {
             return Vec::new();
         };
-        let snoozed = self.settings.snooze_until.is_some_and(|end| now < end);
+        let snoozed = self.active_snooze_end(now).is_some();
         if account.muted || !n.show_message_notifications || snoozed {
             return Vec::new();
         }
@@ -665,6 +688,15 @@ impl Core {
             body,
             sound,
         }]
+    }
+
+    /// End of the Snooze in Unix seconds, or `None` when it is off or already over.
+    pub fn active_snooze_end(&self, now: u64) -> Option<u64> {
+        self.settings.snooze_until.filter(|&end| now < end)
+    }
+
+    pub fn accounts(&self) -> &[Account] {
+        &self.settings.accounts
     }
 
     pub fn autostart_enabled(&self) -> bool {
@@ -1329,6 +1361,50 @@ mod tests {
         assert_eq!(effects, vec![Effect::ShowWindow]);
     }
 
+    fn menu(core: &Core) -> Vec<(String, String)> {
+        core.menu_accounts()
+            .into_iter()
+            .map(|m| (m.id, m.label))
+            .collect()
+    }
+
+    #[test]
+    fn menu_lists_accounts_in_order_with_unread_counts_above_zero() {
+        let mut core = started(TWO);
+        assert_eq!(
+            menu(&core),
+            vec![
+                ("a".to_string(), "Account 1".to_string()),
+                ("b".to_string(), "Account 2".to_string())
+            ]
+        );
+        title(&mut core, "b", "(4) WhatsApp");
+        assert_eq!(menu(&core)[0].1, "Account 1");
+        assert_eq!(menu(&core)[1].1, "Account 2 (4)");
+        title(&mut core, "b", "WhatsApp");
+        assert_eq!(menu(&core)[1].1, "Account 2");
+    }
+
+    #[test]
+    fn menu_follows_rename_add_and_remove() {
+        let mut core = started(TWO);
+        core.handle(Event::RenameAccount {
+            id: "a".into(),
+            name: "Work".into(),
+        });
+        assert_eq!(menu(&core)[0].1, "Work");
+        core.handle(Event::AddAccount {
+            fresh_id: "c".into(),
+        });
+        assert_eq!(menu(&core).len(), 3);
+        core.handle(Event::RemoveAccount {
+            id: "a".into(),
+            fresh_id: "d".into(),
+        });
+        let ids: Vec<_> = menu(&core).into_iter().map(|m| m.0).collect();
+        assert_eq!(ids, ["b", "c"]);
+    }
+
     #[test]
     fn switch_to_unknown_account_does_nothing() {
         let mut core = started(TWO);
@@ -1781,6 +1857,20 @@ mod tests {
             body: "hi".into(),
             now,
         })
+    }
+
+    #[test]
+    fn snooze_end_is_reported_only_while_snooze_is_active() {
+        let mut core = started(TWO);
+        assert_eq!(core.active_snooze_end(1000), None);
+        core.handle(Event::SnoozeSet {
+            minutes: 60,
+            now: 1000,
+        });
+        assert_eq!(core.active_snooze_end(1000), Some(1000 + HOUR));
+        assert_eq!(core.active_snooze_end(1000 + HOUR), None);
+        core.handle(Event::SnoozeCleared);
+        assert_eq!(core.active_snooze_end(1000), None);
     }
 
     #[test]
