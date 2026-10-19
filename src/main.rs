@@ -640,6 +640,25 @@ fn notify(app: AppHandle, webview: tauri::Webview, title: String, body: String) 
 }
 
 // Allowed for the local settings webview only: see `build.rs` and `capabilities/settings.json`.
+// The system answers on its own thread, so these run on the async pool, not the main thread.
+#[tauri::command]
+async fn notification_permission() -> &'static str {
+    notify::permission_status()
+}
+
+#[tauri::command]
+async fn request_notification_permission() -> &'static str {
+    notify::request_permission()
+}
+
+#[tauri::command]
+fn open_notification_settings() {
+    const PANE: &str = "x-apple.systempreferences:com.apple.Notifications-Settings.extension";
+    if let Err(e) = tauri_plugin_opener::open_url(PANE, None::<&str>) {
+        eprintln!("Could not open System Settings: {e}");
+    }
+}
+
 #[tauri::command]
 fn get_settings(core: tauri::State<Mutex<Core>>) -> serde_json::Value {
     let core = core.lock().expect("core lock");
@@ -900,6 +919,9 @@ fn main() {
             switch_account,
             remove_account,
             get_settings,
+            notification_permission,
+            request_notification_permission,
+            open_notification_settings,
             set_theme,
             set_zoom,
             set_autostart,

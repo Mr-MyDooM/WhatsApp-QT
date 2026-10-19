@@ -7,6 +7,8 @@ use crate::core::Sound;
 #[cfg(target_os = "macos")]
 mod mac {
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+    use std::time::Duration;
 
     use block2::RcBlock;
     use objc2::rc::Retained;
@@ -14,9 +16,10 @@ mod mac {
     use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
     use objc2_foundation::{NSBundle, NSDictionary, NSError, NSString};
     use objc2_user_notifications::{
-        UNAuthorizationOptions, UNMutableNotificationContent, UNNotification,
-        UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
-        UNNotificationSound, UNUserNotificationCenter, UNUserNotificationCenterDelegate,
+        UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent,
+        UNNotification, UNNotificationPresentationOptions, UNNotificationRequest,
+        UNNotificationResponse, UNNotificationSettings, UNNotificationSound,
+        UNUserNotificationCenter, UNUserNotificationCenterDelegate,
     };
     use tauri::AppHandle;
 
@@ -24,6 +27,7 @@ mod mac {
     use crate::{dispatch, report_error};
 
     const ACCOUNT_KEY: &str = "account_id";
+    const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
     const DENIED_MESSAGE: &str =
         "Notifications are turned off for this app. Turn them on in System Settings > Notifications.";
 
@@ -106,10 +110,8 @@ mod mac {
         if !has_bundle() {
             return;
         }
-        // The system asks the user only the first time. Later calls answer at once.
-        let center = UNUserNotificationCenter::currentNotificationCenter();
-        let block = RcBlock::new(move |granted: Bool, _error: *mut NSError| {
-            if !granted.as_bool() {
+        request_authorization(move |granted| {
+            if !granted {
                 // Report once, not for every message.
                 static REPORTED: AtomicBool = AtomicBool::new(false);
                 if !REPORTED.swap(true, Ordering::Relaxed) {
@@ -119,10 +121,57 @@ mod mac {
             }
             add(&account_id, &title, &body, &sound);
         });
-        center.requestAuthorizationWithOptions_completionHandler(
-            UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound,
-            &block,
-        );
+    }
+
+    /// The system asks the user only the first time. Later calls answer at once.
+    fn request_authorization(on_answer: impl Fn(bool) + 'static) {
+        let block =
+            RcBlock::new(move |granted: Bool, _error: *mut NSError| on_answer(granted.as_bool()));
+        UNUserNotificationCenter::currentNotificationCenter()
+            .requestAuthorizationWithOptions_completionHandler(
+                UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound,
+                &block,
+            );
+    }
+
+    /// Maps a raw `UNAuthorizationStatus` to the key the settings page understands.
+    pub(super) fn status_key(raw: isize) -> &'static str {
+        match UNAuthorizationStatus(raw) {
+            UNAuthorizationStatus::NotDetermined => "not_asked",
+            UNAuthorizationStatus::Denied => "denied",
+            _ => "allowed",
+        }
+    }
+
+    /// Blocks until the system answers: call it off the main thread.
+    pub fn permission_status() -> &'static str {
+        if !has_bundle() {
+            return "no_bundle";
+        }
+        let (tx, rx) = mpsc::channel();
+        let block = RcBlock::new(move |settings: std::ptr::NonNull<UNNotificationSettings>| {
+            let raw = unsafe { settings.as_ref() }.authorizationStatus().0;
+            let _ = tx.send(raw);
+        });
+        UNUserNotificationCenter::currentNotificationCenter()
+            .getNotificationSettingsWithCompletionHandler(&block);
+        rx.recv_timeout(REPLY_TIMEOUT)
+            .map_or("not_asked", status_key)
+    }
+
+    /// Shows the system prompt when nobody answered yet. Returns the status after the answer.
+    /// Blocks: call it off the main thread.
+    pub fn request_permission() -> &'static str {
+        let status = permission_status();
+        if status != "not_asked" {
+            return status;
+        }
+        let (tx, rx) = mpsc::channel();
+        request_authorization(move |granted| {
+            let _ = tx.send(granted);
+        });
+        let _ = rx.recv_timeout(REPLY_TIMEOUT);
+        permission_status()
     }
 
     fn add(account_id: &str, title: &str, body: &str, sound: &Sound) {
@@ -167,6 +216,22 @@ pub fn init(app: AppHandle) {
     let _ = app;
 }
 
+/// One of "allowed", "denied", "not_asked", "no_bundle", "unsupported". Blocks on macOS.
+pub fn permission_status() -> &'static str {
+    #[cfg(target_os = "macos")]
+    return mac::permission_status();
+    #[cfg(not(target_os = "macos"))]
+    "unsupported"
+}
+
+/// Asks the system for permission, then returns the new status. Blocks on macOS.
+pub fn request_permission() -> &'static str {
+    #[cfg(target_os = "macos")]
+    return mac::request_permission();
+    #[cfg(not(target_os = "macos"))]
+    "unsupported"
+}
+
 /// macOS: one delegate for the whole process reads the account id from each notification
 /// and sends the click to the core. No thread is created or kept waiting per notification.
 #[cfg(target_os = "macos")]
@@ -183,5 +248,19 @@ pub fn show(_app: AppHandle, _account_id: String, title: String, body: String, _
         .show()
     {
         eprintln!("Could not show notification: {e}");
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::mac::status_key;
+
+    #[test]
+    fn maps_each_system_status_to_a_key() {
+        assert_eq!(status_key(0), "not_asked");
+        assert_eq!(status_key(1), "denied");
+        assert_eq!(status_key(2), "allowed");
+        assert_eq!(status_key(3), "allowed");
+        assert_eq!(status_key(4), "allowed");
     }
 }

@@ -5,6 +5,9 @@
   "permissions": [
     "core:event:default",
     "allow-get-settings",
+    "allow-notification-permission",
+    "allow-request-notification-permission",
+    "allow-open-notification-settings",
     "allow-set-theme",
     "allow-set-zoom",
     "allow-set-notifications",

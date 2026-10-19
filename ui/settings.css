@@ -5,3 +5,4 @@ label { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 select, input[type=range] { flex: 1; }
 output { width: 3em; text-align: right; }
 #error { color: #c0392b; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
