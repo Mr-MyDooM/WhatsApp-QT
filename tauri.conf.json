@@ -1,7 +1,7 @@
 {
   "productName": "WhatsApp-QT",
   "version": "0.1.0",
-  "identifier": "dev.mrityunjay.whatsapp-qt",
+  "identifier": "dev.mj.whatsapp-qt",
   "build": { "frontendDist": "./ui" },
   "app": { "windows": [], "security": { "csp": null } },
   "bundle": { "active": false, "icon": ["icons/icon.png"] }
