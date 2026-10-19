@@ -629,7 +629,7 @@ impl Core {
         let Some(account) = self.settings.accounts.iter().find(|a| a.id == account_id) else {
             return Vec::new();
         };
-        let snoozed = self.settings.snooze_until.is_some_and(|end| now < end);
+        let snoozed = self.active_snooze_end(now).is_some();
         if !n.show_message_notifications || snoozed {
             return Vec::new();
         }
@@ -653,6 +653,15 @@ impl Core {
             body,
             sound,
         }]
+    }
+
+    /// End of the Snooze in Unix seconds, or `None` when it is off or already over.
+    pub fn active_snooze_end(&self, now: u64) -> Option<u64> {
+        self.settings.snooze_until.filter(|&end| now < end)
+    }
+
+    pub fn accounts(&self) -> &[Account] {
+        &self.settings.accounts
     }
 
     pub fn autostart_enabled(&self) -> bool {
@@ -1747,6 +1756,20 @@ mod tests {
             body: "hi".into(),
             now,
         })
+    }
+
+    #[test]
+    fn snooze_end_is_reported_only_while_snooze_is_active() {
+        let mut core = started(TWO);
+        assert_eq!(core.active_snooze_end(1000), None);
+        core.handle(Event::SnoozeSet {
+            minutes: 60,
+            now: 1000,
+        });
+        assert_eq!(core.active_snooze_end(1000), Some(1000 + HOUR));
+        assert_eq!(core.active_snooze_end(1000 + HOUR), None);
+        core.handle(Event::SnoozeCleared);
+        assert_eq!(core.active_snooze_end(1000), None);
     }
 
     #[test]

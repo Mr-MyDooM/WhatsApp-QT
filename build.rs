@@ -10,6 +10,7 @@ fn main() {
             "show_account_menu",
             "rename_account",
             "cancel_rename",
+            "open_rename_account",
             "retry_account",
             "get_settings",
             "notification_permission",

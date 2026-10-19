@@ -707,6 +707,12 @@ fn rename_account(app: AppHandle, id: String, name: String) {
     close_rename(&app);
 }
 
+/// The Rename button of the settings window: opens the same rename window as the account menu.
+#[tauri::command]
+fn open_rename_account(app: AppHandle, id: String) {
+    open_rename(&app, &id);
+}
+
 #[tauri::command]
 fn cancel_rename(app: AppHandle) {
     close_rename(&app);
@@ -794,8 +800,8 @@ fn open_settings(app: &AppHandle) {
     }
     let result =
         WebviewWindowBuilder::new(app, SETTINGS_LABEL, WebviewUrl::App("settings.html".into()))
-            .title("Settings")
-            .inner_size(420.0, 380.0)
+            .title("General")
+            .inner_size(480.0, 420.0)
             .build();
     if let Err(e) = result {
         eprintln!("Could not open settings window: {e}");
@@ -859,6 +865,8 @@ fn get_settings(core: tauri::State<Mutex<Core>>) -> serde_json::Value {
         "clear_cache_supported": cfg!(target_os = "macos"),
         // Set when the settings file was unusable: changes are not saved then.
         "load_error": core.load_error(),
+        "snooze_until": core.active_snooze_end(unix_now()),
+        "accounts": core.accounts(),
     })
 }
 
@@ -1134,6 +1142,7 @@ fn main() {
             show_account_menu,
             rename_account,
             cancel_rename,
+            open_rename_account,
             retry_account,
             get_settings,
             notification_permission,
