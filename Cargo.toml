@@ -28,6 +28,9 @@ notify-rust = "4.0"
 log = "0.4"
 env_logger = "0.11"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+mac-notification-sys = "0.6"
+
 # Windows-only: winrt-notification depends on the `windows` crate, which does not
 # build on macOS/Linux. Keep it out of non-Windows builds.
 [target.'cfg(windows)'.dependencies]
