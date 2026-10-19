@@ -169,6 +169,24 @@ pub enum Event {
         raw: Result<Option<String>, String>,
         fresh_id: String,
     },
+    /// `fresh_id` is a new UUID for the new account.
+    AddAccount {
+        fresh_id: String,
+    },
+    /// `fresh_id` is a new UUID, used only when the last account is removed.
+    RemoveAccount {
+        id: String,
+        fresh_id: String,
+    },
+    SwitchAccount {
+        id: String,
+    },
+    /// Zero-based position in the sidebar list.
+    SwitchToIndex(usize),
+    /// Next (+1) or previous (-1) account, wrapping around.
+    SwitchRelative(i32),
+    /// The sidebar page loaded and wants the current list.
+    SidebarReady,
     ThemeChanged {
         theme: String,
     },
@@ -187,6 +205,13 @@ pub enum Effect {
     CreateAccountWebview {
         id: String,
     },
+    CloseAccountWebview {
+        id: String,
+    },
+    /// Delete the account's data store for good.
+    DeleteAccountData {
+        id: String,
+    },
     ShowAccount {
         id: String,
     },
@@ -197,6 +222,10 @@ pub enum Effect {
     },
     ApplyZoom {
         factor: f64,
+    },
+    RenderSidebar {
+        accounts: Vec<Account>,
+        active: String,
     },
     SaveSettings {
         json: String,
@@ -218,6 +247,28 @@ impl Core {
     pub fn handle(&mut self, event: Event) -> Vec<Effect> {
         match event {
             Event::SettingsLoaded { raw, fresh_id } => self.load(raw, fresh_id),
+            Event::AddAccount { fresh_id } => self.add(fresh_id),
+            Event::RemoveAccount { id, fresh_id } => self.remove(&id, fresh_id),
+            Event::SwitchAccount { id } => self.switch(&id),
+            Event::SwitchToIndex(i) => match self.settings.accounts.get(i) {
+                Some(a) => {
+                    let id = a.id.clone();
+                    self.switch(&id)
+                }
+                None => Vec::new(),
+            },
+            Event::SwitchRelative(delta) => {
+                let n = self.settings.accounts.len() as i32;
+                if n == 0 {
+                    return Vec::new();
+                }
+                let current = self.active_index() as i32;
+                let id = self.settings.accounts[(current + delta).rem_euclid(n) as usize]
+                    .id
+                    .clone();
+                self.switch(&id)
+            }
+            Event::SidebarReady => vec![self.render()],
             Event::ThemeChanged { theme } => self.set_theme(theme),
             Event::ZoomChanged { factor } => self.set_zoom(factor),
             Event::ZoomStepped { delta } => self.set_zoom(self.settings.zoom_factor + delta),
@@ -254,7 +305,7 @@ impl Core {
         self.settings.theme = theme.clone();
         let css = theme_css(&theme);
         let mut effects = vec![Effect::ApplyTheme { theme, css }];
-        self.push_save(&mut effects);
+        self.save(&mut effects);
         effects
     }
 
@@ -268,11 +319,27 @@ impl Core {
         let factor = ((factor * 100.0).round() / 100.0).clamp(MIN_ZOOM, MAX_ZOOM);
         self.settings.zoom_factor = factor;
         let mut effects = vec![Effect::ApplyZoom { factor }];
-        self.push_save(&mut effects);
+        self.save(&mut effects);
         effects
     }
 
-    fn push_save(&self, effects: &mut Vec<Effect>) {
+    fn active_index(&self) -> usize {
+        let active = self.settings.active_account.as_ref();
+        self.settings
+            .accounts
+            .iter()
+            .position(|a| Some(&a.id) == active)
+            .unwrap_or(0)
+    }
+
+    fn render(&self) -> Effect {
+        Effect::RenderSidebar {
+            accounts: self.settings.accounts.clone(),
+            active: self.settings.active_account.clone().unwrap_or_default(),
+        }
+    }
+
+    fn save(&self, effects: &mut Vec<Effect>) {
         if self.save_blocked {
             return;
         }
@@ -282,6 +349,66 @@ impl Core {
                 message: format!("Could not serialize settings: {e}"),
             }),
         }
+    }
+
+    /// Appends an account with the first free default name and makes it active.
+    fn new_account(&mut self, id: String) {
+        let name = (1..)
+            .map(|n| format!("Account {n}"))
+            .find(|name| self.settings.accounts.iter().all(|a| &a.name != name))
+            .expect("unbounded range");
+        self.settings.active_account = Some(id.clone());
+        self.settings.accounts.push(Account { id, name });
+    }
+
+    fn add(&mut self, fresh_id: String) -> Vec<Effect> {
+        self.new_account(fresh_id.clone());
+        let mut effects = vec![
+            Effect::CreateAccountWebview {
+                id: fresh_id.clone(),
+            },
+            Effect::ShowAccount { id: fresh_id },
+            self.render(),
+        ];
+        self.save(&mut effects);
+        effects
+    }
+
+    fn switch(&mut self, id: &str) -> Vec<Effect> {
+        if !self.settings.accounts.iter().any(|a| a.id == id) {
+            return Vec::new();
+        }
+        self.settings.active_account = Some(id.to_string());
+        let mut effects = vec![Effect::ShowAccount { id: id.to_string() }, self.render()];
+        self.save(&mut effects);
+        effects
+    }
+
+    fn remove(&mut self, id: &str, fresh_id: String) -> Vec<Effect> {
+        let Some(pos) = self.settings.accounts.iter().position(|a| a.id == id) else {
+            return Vec::new();
+        };
+        let was_active = self.settings.active_account.as_deref() == Some(id);
+        self.settings.accounts.remove(pos);
+        let mut effects = vec![
+            Effect::CloseAccountWebview { id: id.to_string() },
+            Effect::DeleteAccountData { id: id.to_string() },
+        ];
+        if self.settings.accounts.is_empty() {
+            self.new_account(fresh_id.clone());
+            effects.push(Effect::CreateAccountWebview { id: fresh_id });
+        } else if was_active {
+            let next = self.settings.accounts[pos.min(self.settings.accounts.len() - 1)]
+                .id
+                .clone();
+            self.settings.active_account = Some(next);
+        }
+        effects.push(Effect::ShowAccount {
+            id: self.settings.active_account.clone().expect("set above"),
+        });
+        effects.push(self.render());
+        self.save(&mut effects);
+        effects
     }
 
     fn load(&mut self, raw: Result<Option<String>, String>, fresh_id: String) -> Vec<Effect> {
@@ -339,13 +466,9 @@ impl Core {
         effects.push(Effect::ShowAccount {
             id: s.active_account.clone().expect("set above"),
         });
-        if changed && !self.save_blocked {
-            match serde_json::to_string_pretty(&*s) {
-                Ok(json) => effects.push(Effect::SaveSettings { json }),
-                Err(e) => effects.push(Effect::ReportError {
-                    message: format!("Could not serialize settings: {e}"),
-                }),
-            }
+        effects.push(self.render());
+        if changed {
+            self.save(&mut effects);
         }
         effects
     }
@@ -444,6 +567,19 @@ mod tests {
                 Effect::CreateAccountWebview { id: "a".into() },
                 Effect::CreateAccountWebview { id: "b".into() },
                 Effect::ShowAccount { id: "b".into() },
+                Effect::RenderSidebar {
+                    accounts: vec![
+                        Account {
+                            id: "a".into(),
+                            name: "A".into()
+                        },
+                        Account {
+                            id: "b".into(),
+                            name: "B".into()
+                        },
+                    ],
+                    active: "b".into(),
+                },
             ]
         );
     }
@@ -483,6 +619,225 @@ mod tests {
             .any(|e| matches!(e, Effect::SaveSettings { .. })));
     }
 
+    // --- accounts ---
+
+    fn started(raw: &str) -> Core {
+        let mut core = Core::default();
+        core.handle(Event::SettingsLoaded {
+            raw: Ok(Some(raw.into())),
+            fresh_id: "unused".into(),
+        });
+        core
+    }
+
+    const TWO: &str = r#"{"accounts":[{"id":"a","name":"Account 1"},{"id":"b","name":"Account 2"}],"active_account":"a"}"#;
+
+    fn has_save(effects: &[Effect]) -> bool {
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::SaveSettings { .. }))
+    }
+
+    #[test]
+    fn add_makes_new_active_account_with_default_name_and_webview() {
+        let mut core = started(TWO);
+        let effects = core.handle(Event::AddAccount {
+            fresh_id: "c".into(),
+        });
+        assert!(effects.contains(&Effect::CreateAccountWebview { id: "c".into() }));
+        assert!(effects.contains(&Effect::ShowAccount { id: "c".into() }));
+        let out = saved(&effects);
+        assert_eq!(out["accounts"][2]["id"], "c");
+        assert_eq!(out["accounts"][2]["name"], "Account 3");
+        assert_eq!(out["active_account"], "c");
+    }
+
+    #[test]
+    fn default_name_skips_names_already_taken() {
+        let mut core =
+            started(r#"{"accounts":[{"id":"a","name":"Account 2"}],"active_account":"a"}"#);
+        let out = saved(&core.handle(Event::AddAccount {
+            fresh_id: "c".into(),
+        }));
+        assert_eq!(out["accounts"][1]["name"], "Account 1");
+    }
+
+    #[test]
+    fn switch_shows_only_that_account_and_saves() {
+        let mut core = started(TWO);
+        let effects = core.handle(Event::SwitchAccount { id: "b".into() });
+        assert!(effects.contains(&Effect::ShowAccount { id: "b".into() }));
+        assert_eq!(saved(&effects)["active_account"], "b");
+    }
+
+    #[test]
+    fn switch_to_unknown_account_does_nothing() {
+        let mut core = started(TWO);
+        assert!(core
+            .handle(Event::SwitchAccount { id: "zz".into() })
+            .is_empty());
+    }
+
+    #[test]
+    fn switch_by_position_and_wrapping_neighbour() {
+        let mut core = started(TWO);
+        let e = core.handle(Event::SwitchToIndex(1));
+        assert!(e.contains(&Effect::ShowAccount { id: "b".into() }));
+        assert!(core.handle(Event::SwitchToIndex(9)).is_empty());
+        let e = core.handle(Event::SwitchRelative(1));
+        assert!(e.contains(&Effect::ShowAccount { id: "a".into() }));
+        let e = core.handle(Event::SwitchRelative(-1));
+        assert!(e.contains(&Effect::ShowAccount { id: "b".into() }));
+    }
+
+    #[test]
+    fn remove_inactive_deletes_its_store_and_keeps_active() {
+        let mut core = started(TWO);
+        let effects = core.handle(Event::RemoveAccount {
+            id: "b".into(),
+            fresh_id: "n".into(),
+        });
+        assert!(effects.contains(&Effect::CloseAccountWebview { id: "b".into() }));
+        assert!(effects.contains(&Effect::DeleteAccountData { id: "b".into() }));
+        let out = saved(&effects);
+        assert_eq!(out["accounts"].as_array().unwrap().len(), 1);
+        assert_eq!(out["active_account"], "a");
+    }
+
+    #[test]
+    fn remove_active_activates_another_account() {
+        let mut core = started(TWO);
+        let effects = core.handle(Event::RemoveAccount {
+            id: "a".into(),
+            fresh_id: "n".into(),
+        });
+        assert!(effects.contains(&Effect::ShowAccount { id: "b".into() }));
+        assert_eq!(saved(&effects)["active_account"], "b");
+    }
+
+    #[test]
+    fn remove_last_creates_new_default_account() {
+        let mut core =
+            started(r#"{"accounts":[{"id":"a","name":"Account 1"}],"active_account":"a"}"#);
+        let effects = core.handle(Event::RemoveAccount {
+            id: "a".into(),
+            fresh_id: "n".into(),
+        });
+        assert!(effects.contains(&Effect::DeleteAccountData { id: "a".into() }));
+        assert!(effects.contains(&Effect::CreateAccountWebview { id: "n".into() }));
+        assert!(effects.contains(&Effect::ShowAccount { id: "n".into() }));
+        let out = saved(&effects);
+        assert_eq!(out["accounts"].as_array().unwrap().len(), 1);
+        assert_eq!(out["accounts"][0]["id"], "n");
+    }
+
+    #[test]
+    fn remove_unknown_account_does_nothing() {
+        let mut core = started(TWO);
+        let effects = core.handle(Event::RemoveAccount {
+            id: "zz".into(),
+            fresh_id: "n".into(),
+        });
+        assert!(effects.is_empty());
+    }
+
+    #[test]
+    fn removed_id_does_not_come_back() {
+        let mut core = started(TWO);
+        core.handle(Event::RemoveAccount {
+            id: "b".into(),
+            fresh_id: "n".into(),
+        });
+        let out = saved(&core.handle(Event::AddAccount {
+            fresh_id: "c".into(),
+        }));
+        let ids: Vec<_> = out["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(ids, ["a", "c"]);
+    }
+
+    #[test]
+    fn saved_accounts_round_trip_through_a_new_core() {
+        let mut core = started(TWO);
+        core.handle(Event::AddAccount {
+            fresh_id: "c".into(),
+        });
+        let json = saved(&core.handle(Event::SwitchAccount { id: "b".into() })).to_string();
+        let effects = load(Some(&json), "unused");
+        assert_eq!(
+            effects,
+            vec![
+                Effect::CreateAccountWebview { id: "a".into() },
+                Effect::CreateAccountWebview { id: "b".into() },
+                Effect::CreateAccountWebview { id: "c".into() },
+                Effect::ShowAccount { id: "b".into() },
+                Effect::RenderSidebar {
+                    accounts: vec![
+                        Account {
+                            id: "a".into(),
+                            name: "Account 1".into()
+                        },
+                        Account {
+                            id: "b".into(),
+                            name: "Account 2".into()
+                        },
+                        Account {
+                            id: "c".into(),
+                            name: "Account 3".into()
+                        },
+                    ],
+                    active: "b".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn no_save_after_blocked_load() {
+        let mut core = Core::default();
+        core.handle(Event::SettingsLoaded {
+            raw: Ok(Some("{bad".into())),
+            fresh_id: "u1".into(),
+        });
+        let effects = core.handle(Event::AddAccount {
+            fresh_id: "c".into(),
+        });
+        assert!(!has_save(&effects));
+        let effects = core.handle(Event::SwitchAccount { id: "u1".into() });
+        assert!(!has_save(&effects));
+        let effects = core.handle(Event::RemoveAccount {
+            id: "c".into(),
+            fresh_id: "n".into(),
+        });
+        assert!(!has_save(&effects));
+    }
+
+    #[test]
+    fn sidebar_ready_renders_current_state() {
+        let mut core = started(TWO);
+        let effects = core.handle(Event::SidebarReady);
+        assert_eq!(
+            effects,
+            vec![Effect::RenderSidebar {
+                accounts: vec![
+                    Account {
+                        id: "a".into(),
+                        name: "Account 1".into()
+                    },
+                    Account {
+                        id: "b".into(),
+                        name: "Account 2".into()
+                    },
+                ],
+                active: "a".into(),
+            }]
+        );
+    }
+
     fn loaded_core() -> Core {
         let mut core = Core::default();
         core.handle(Event::SettingsLoaded {
@@ -500,12 +855,6 @@ mod tests {
 
     fn zoom(core: &mut Core, factor: f64) -> Vec<Effect> {
         core.handle(Event::ZoomChanged { factor })
-    }
-
-    fn has_save(effects: &[Effect]) -> bool {
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::SaveSettings { .. }))
     }
 
     #[test]

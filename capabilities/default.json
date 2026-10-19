@@ -1,1 +1,11 @@
-{ "identifier": "default", "windows": ["main"], "webviews": ["sidebar"], "permissions": ["core:default"] }
+{
+  "identifier": "default",
+  "webviews": ["sidebar"],
+  "permissions": [
+    "core:default",
+    "allow-sidebar-ready",
+    "allow-add-account",
+    "allow-switch-account",
+    "allow-remove-account"
+  ]
+}

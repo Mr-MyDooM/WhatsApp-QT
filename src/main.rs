@@ -3,25 +3,26 @@ mod core;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use tauri::menu::{Menu, MenuItem, MenuItemKind, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::webview::{PageLoadEvent, WebviewBuilder};
 use tauri::{
-    Emitter, LogicalPosition, LogicalSize, Manager, Theme, WebviewUrl, WebviewWindowBuilder,
-    WindowBuilder, WindowEvent,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Theme, WebviewUrl,
+    WebviewWindowBuilder, WindowBuilder, WindowEvent,
 };
 
 use crate::core::{theme_css, Core, Effect, Event};
-
-const SETTINGS_LABEL: &str = "settings";
-const ZOOM_STEP: f64 = 0.1;
-const SAVE_FAILED_MESSAGE: &str =
-    "Could not save your settings. The change is active until you quit the app.";
 
 const SIDEBAR_WIDTH: f64 = 60.0;
 const WINDOW_WIDTH: f64 = 1200.0;
 const WINDOW_HEIGHT: f64 = 800.0;
 const ACCOUNT_URL: &str = "https://web.whatsapp.com";
 const ACCOUNT_LABEL_PREFIX: &str = "account-";
+const SIDEBAR_LABEL: &str = "sidebar";
+const MAX_SWITCH_SHORTCUTS: usize = 9;
+const SETTINGS_LABEL: &str = "settings";
+const ZOOM_STEP: f64 = 0.1;
+const SAVE_FAILED_MESSAGE: &str =
+    "Could not save your settings. The change is active until you quit the app.";
 /// WhatsApp Web rejects the default WKWebView user agent ("works with Safari 15+").
 const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
 
@@ -33,8 +34,38 @@ fn account_label(id: &str) -> String {
     format!("{ACCOUNT_LABEL_PREFIX}{id}")
 }
 
+#[cfg(not(target_os = "macos"))]
+fn account_data_dir(app: &AppHandle, uuid: &uuid::Uuid) -> tauri::Result<PathBuf> {
+    Ok(app
+        .path()
+        .app_data_dir()?
+        .join("accounts")
+        .join(uuid.to_string()))
+}
+
+/// Deletes the account's data store for good. The account webview is already closed.
+fn delete_account_data(app: &AppHandle, id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let uuid = uuid::Uuid::parse_str(id)?;
+    #[cfg(target_os = "macos")]
+    {
+        let app = app.clone();
+        let bytes = *uuid.as_bytes();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = app.remove_data_store(bytes).await {
+                eprintln!("Could not remove data store: {e}");
+            }
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    match std::fs::remove_dir_all(account_data_dir(app, &uuid)?) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+        _ => {}
+    }
+    Ok(())
+}
+
 fn add_account_webview(
-    app: &tauri::AppHandle,
+    app: &AppHandle,
     window: &tauri::Window,
     id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -47,12 +78,7 @@ fn add_account_webview(
     #[cfg(target_os = "macos")]
     let builder = builder.data_store_identifier(*uuid.as_bytes());
     #[cfg(not(target_os = "macos"))]
-    let builder = builder.data_directory(
-        app.path()
-            .app_data_dir()?
-            .join("accounts")
-            .join(uuid.to_string()),
-    );
+    let builder = builder.data_directory(account_data_dir(app, &uuid)?);
     #[cfg(target_os = "macos")]
     let _ = app;
 
@@ -67,7 +93,7 @@ fn add_account_webview(
     Ok(())
 }
 
-fn show_account(app: &tauri::AppHandle, id: &str) {
+fn show_account(app: &AppHandle, id: &str) {
     let active = account_label(id);
     for (label, webview) in app.webviews() {
         if label.starts_with(ACCOUNT_LABEL_PREFIX) {
@@ -80,10 +106,10 @@ fn show_account(app: &tauri::AppHandle, id: &str) {
     }
 }
 
-fn layout(app: &tauri::AppHandle, window: &tauri::Window, size: tauri::PhysicalSize<u32>) {
+fn layout(app: &AppHandle, window: &tauri::Window, size: tauri::PhysicalSize<u32>) {
     let size = size.to_logical::<f64>(window.scale_factor().unwrap_or(1.0));
     for (label, webview) in app.webviews() {
-        if label == "sidebar" {
+        if label == SIDEBAR_LABEL {
             let _ = webview.set_size(LogicalSize::new(SIDEBAR_WIDTH, size.height));
         } else if label.starts_with(ACCOUNT_LABEL_PREFIX) {
             let _ = webview.set_position(LogicalPosition::new(SIDEBAR_WIDTH, 0.0));
@@ -96,7 +122,7 @@ fn layout(app: &tauri::AppHandle, window: &tauri::Window, size: tauri::PhysicalS
 }
 
 /// Logs the detail, and shows the friendly message on the settings page if it is open.
-fn report_error(app: &tauri::AppHandle, friendly: &str, detail: &str) {
+fn report_error(app: &AppHandle, friendly: &str, detail: &str) {
     eprintln!("{detail}");
     let _ = app.emit_to(SETTINGS_LABEL, "app-error", friendly);
 }
@@ -111,81 +137,27 @@ fn inject_css(webview: &tauri::Webview, css: &str) {
     ));
 }
 
-/// Runs core effects for a change that comes from a menu item or a settings command.
-fn dispatch(app: &tauri::AppHandle, event: Event) {
-    let Some(window) = app.get_window("main") else {
-        return;
-    };
-    let effects = app
-        .state::<Mutex<Core>>()
-        .lock()
-        .expect("core lock")
-        .handle(event);
-    run_effects(app, &window, effects);
-}
-
-fn open_settings(app: &tauri::AppHandle) {
-    if let Some(w) = app.get_webview_window(SETTINGS_LABEL) {
-        let _ = w.set_focus();
-        return;
-    }
-    let result =
-        WebviewWindowBuilder::new(app, SETTINGS_LABEL, WebviewUrl::App("settings.html".into()))
-            .title("Settings")
-            .inner_size(420.0, 300.0)
-            .build();
-    if let Err(e) = result {
-        eprintln!("Could not open settings window: {e}");
-    }
-}
-
-#[tauri::command]
-fn get_settings(core: tauri::State<Mutex<Core>>) -> serde_json::Value {
-    let core = core.lock().expect("core lock");
-    serde_json::json!({ "theme": core.theme(), "zoom_factor": core.zoom_factor() })
-}
-
-#[tauri::command]
-fn set_theme(app: tauri::AppHandle, theme: String) {
-    dispatch(&app, Event::ThemeChanged { theme });
-}
-
-#[tauri::command]
-fn set_zoom(app: tauri::AppHandle, factor: f64) {
-    dispatch(&app, Event::ZoomChanged { factor });
-}
-
-/// Default menu plus Settings (Cmd+,) in the app menu and zoom items in View.
-fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let menu = Menu::default(app)?;
-    let settings = MenuItem::with_id(app, "settings", "Settings...", true, Some("CmdOrCtrl+,"))?;
-    let items = menu.items()?;
-    if let Some(MenuItemKind::Submenu(app_menu)) = items.first() {
-        app_menu.insert(&settings, 1)?;
-        app_menu.insert(&PredefinedMenuItem::separator(app)?, 2)?;
-    }
-    let view = items
-        .iter()
-        .filter_map(MenuItemKind::as_submenu)
-        .find(|m| m.text().is_ok_and(|t| t == "View"));
-    if let Some(view) = view {
-        for (id, label, key) in [
-            ("zoom-in", "Zoom In", "CmdOrCtrl+="),
-            ("zoom-out", "Zoom Out", "CmdOrCtrl+-"),
-            ("zoom-reset", "Actual Size", "CmdOrCtrl+0"),
-        ] {
-            view.append(&MenuItem::with_id(app, id, label, true, Some(key))?)?;
-        }
-    }
-    Ok(menu)
-}
-
-fn run_effects(app: &tauri::AppHandle, window: &tauri::Window, effects: Vec<Effect>) {
+fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
     for effect in effects {
         match effect {
             Effect::CreateAccountWebview { id } => {
-                if let Err(e) = add_account_webview(app, window, &id) {
+                let Some(window) = app.get_window("main") else {
+                    continue;
+                };
+                if let Err(e) = add_account_webview(app, &window, &id) {
                     eprintln!("Could not create account webview {id}: {e}");
+                }
+            }
+            Effect::CloseAccountWebview { id } => {
+                if let Some(webview) = app.get_webview(&account_label(&id)) {
+                    if let Err(e) = webview.close() {
+                        eprintln!("Could not close account webview {id}: {e}");
+                    }
+                }
+            }
+            Effect::DeleteAccountData { id } => {
+                if let Err(e) = delete_account_data(app, &id) {
+                    eprintln!("Could not delete data of account {id}: {e}");
                 }
             }
             Effect::ShowAccount { id } => show_account(app, &id),
@@ -195,7 +167,9 @@ fn run_effects(app: &tauri::AppHandle, window: &tauri::Window, effects: Vec<Effe
                     "light" => Some(Theme::Light),
                     _ => None,
                 };
-                let _ = window.set_theme(scheme);
+                if let Some(window) = app.get_window("main") {
+                    let _ = window.set_theme(scheme);
+                }
                 for (label, webview) in app.webviews() {
                     if label.starts_with(ACCOUNT_LABEL_PREFIX) {
                         inject_css(&webview, &css);
@@ -207,6 +181,12 @@ fn run_effects(app: &tauri::AppHandle, window: &tauri::Window, effects: Vec<Effe
                     if label.starts_with(ACCOUNT_LABEL_PREFIX) {
                         let _ = webview.set_zoom(factor);
                     }
+                }
+            }
+            Effect::RenderSidebar { accounts, active } => {
+                let payload = serde_json::json!({ "accounts": accounts, "active": active });
+                if let Err(e) = app.emit_to(SIDEBAR_LABEL, "accounts", payload) {
+                    eprintln!("Could not update sidebar: {e}");
                 }
             }
             Effect::SaveSettings { json } => {
@@ -233,17 +213,228 @@ fn run_effects(app: &tauri::AppHandle, window: &tauri::Window, effects: Vec<Effe
     }
 }
 
+fn dispatch(app: &AppHandle, event: Event) {
+    let effects = app
+        .state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .handle(event);
+    run_effects(app, effects);
+}
+
+fn new_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+// These commands are allowed for the local sidebar webview only: see `build.rs` and
+// `capabilities/default.json`. The remote web.whatsapp.com webviews get no permission.
+#[tauri::command]
+fn sidebar_ready(app: AppHandle) {
+    dispatch(&app, Event::SidebarReady);
+}
+
+#[tauri::command]
+fn add_account(app: AppHandle) {
+    dispatch(&app, Event::AddAccount { fresh_id: new_id() });
+}
+
+#[tauri::command]
+fn switch_account(app: AppHandle, id: String) {
+    dispatch(&app, Event::SwitchAccount { id });
+}
+
+/// The sidebar asks the user to confirm before it calls this.
+#[tauri::command]
+fn remove_account(app: AppHandle, id: String) {
+    dispatch(
+        &app,
+        Event::RemoveAccount {
+            id,
+            fresh_id: new_id(),
+        },
+    );
+}
+
+fn open_settings(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window(SETTINGS_LABEL) {
+        let _ = w.set_focus();
+        return;
+    }
+    let result =
+        WebviewWindowBuilder::new(app, SETTINGS_LABEL, WebviewUrl::App("settings.html".into()))
+            .title("Settings")
+            .inner_size(420.0, 300.0)
+            .build();
+    if let Err(e) = result {
+        eprintln!("Could not open settings window: {e}");
+    }
+}
+
+// Allowed for the local settings webview only: see `build.rs` and `capabilities/settings.json`.
+#[tauri::command]
+fn get_settings(core: tauri::State<Mutex<Core>>) -> serde_json::Value {
+    let core = core.lock().expect("core lock");
+    serde_json::json!({ "theme": core.theme(), "zoom_factor": core.zoom_factor() })
+}
+
+#[tauri::command]
+fn set_theme(app: AppHandle, theme: String) {
+    dispatch(&app, Event::ThemeChanged { theme });
+}
+
+#[tauri::command]
+fn set_zoom(app: AppHandle, factor: f64) {
+    dispatch(&app, Event::ZoomChanged { factor });
+}
+
+const MENU_SETTINGS: &str = "settings";
+const MENU_ZOOM_IN: &str = "zoom-in";
+const MENU_ZOOM_OUT: &str = "zoom-out";
+const MENU_ZOOM_RESET: &str = "zoom-reset";
+const MENU_ADD: &str = "account-add";
+const MENU_REMOVE: &str = "account-remove";
+const MENU_NEXT: &str = "account-next";
+const MENU_PREVIOUS: &str = "account-previous";
+const MENU_SWITCH_PREFIX: &str = "account-switch-";
+
+fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let app_menu = Submenu::with_items(
+        app,
+        "WhatsApp",
+        true,
+        &[
+            &PredefinedMenuItem::about(app, None, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, MENU_SETTINGS, "Settings...", true, Some("CmdOrCtrl+,"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, None)?,
+            &PredefinedMenuItem::hide_others(app, None)?,
+            &PredefinedMenuItem::show_all(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::quit(app, None)?,
+        ],
+    )?;
+    // Without an Edit menu, Cmd+C, Cmd+V and friends do nothing in the webviews on macOS.
+    let edit_menu = Submenu::with_items(
+        app,
+        "Edit",
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, None)?,
+            &PredefinedMenuItem::redo(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, None)?,
+            &PredefinedMenuItem::copy(app, None)?,
+            &PredefinedMenuItem::paste(app, None)?,
+            &PredefinedMenuItem::select_all(app, None)?,
+        ],
+    )?;
+    let account_menu = Submenu::with_items(
+        app,
+        "Account",
+        true,
+        &[
+            &MenuItem::with_id(app, MENU_ADD, "New Account", true, Some("CmdOrCtrl+T"))?,
+            &MenuItem::with_id(
+                app,
+                MENU_REMOVE,
+                "Remove Account",
+                true,
+                Some("CmdOrCtrl+W"),
+            )?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, MENU_NEXT, "Next Account", true, Some("Ctrl+Tab"))?,
+            &MenuItem::with_id(
+                app,
+                MENU_PREVIOUS,
+                "Previous Account",
+                true,
+                Some("Ctrl+Shift+Tab"),
+            )?,
+        ],
+    )?;
+    for n in 1..=MAX_SWITCH_SHORTCUTS {
+        account_menu.append(&MenuItem::with_id(
+            app,
+            format!("{MENU_SWITCH_PREFIX}{n}"),
+            format!("Account {n}"),
+            true,
+            Some(format!("CmdOrCtrl+{n}").as_str()),
+        )?)?;
+    }
+    let view_menu = Submenu::with_items(
+        app,
+        "View",
+        true,
+        &[
+            &MenuItem::with_id(app, MENU_ZOOM_IN, "Zoom In", true, Some("CmdOrCtrl+="))?,
+            &MenuItem::with_id(app, MENU_ZOOM_OUT, "Zoom Out", true, Some("CmdOrCtrl+-"))?,
+            &MenuItem::with_id(
+                app,
+                MENU_ZOOM_RESET,
+                "Actual Size",
+                true,
+                Some("CmdOrCtrl+0"),
+            )?,
+        ],
+    )?;
+    let window_menu = Submenu::with_items(
+        app,
+        "Window",
+        true,
+        &[&PredefinedMenuItem::minimize(app, None)?],
+    )?;
+    Menu::with_items(
+        app,
+        &[
+            &app_menu,
+            &edit_menu,
+            &view_menu,
+            &account_menu,
+            &window_menu,
+        ],
+    )
+}
+
+fn on_menu_event(app: &AppHandle, id: &str) {
+    match id {
+        MENU_ADD => dispatch(app, Event::AddAccount { fresh_id: new_id() }),
+        // The sidebar knows the active account and asks for confirmation.
+        MENU_REMOVE => {
+            if let Err(e) = app.emit_to(SIDEBAR_LABEL, "remove-active", ()) {
+                eprintln!("Could not ask the sidebar to remove the account: {e}");
+            }
+        }
+        MENU_SETTINGS => open_settings(app),
+        MENU_ZOOM_IN => dispatch(app, Event::ZoomStepped { delta: ZOOM_STEP }),
+        MENU_ZOOM_OUT => dispatch(app, Event::ZoomStepped { delta: -ZOOM_STEP }),
+        MENU_ZOOM_RESET => dispatch(app, Event::ZoomChanged { factor: 1.0 }),
+        MENU_NEXT => dispatch(app, Event::SwitchRelative(1)),
+        MENU_PREVIOUS => dispatch(app, Event::SwitchRelative(-1)),
+        _ => {
+            if let Some(n) = id
+                .strip_prefix(MENU_SWITCH_PREFIX)
+                .and_then(|n| n.parse::<usize>().ok())
+            {
+                dispatch(app, Event::SwitchToIndex(n - 1));
+            }
+        }
+    }
+}
+
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![get_settings, set_theme, set_zoom])
+        .invoke_handler(tauri::generate_handler![
+            sidebar_ready,
+            add_account,
+            switch_account,
+            remove_account,
+            get_settings,
+            set_theme,
+            set_zoom
+        ])
         .menu(build_menu)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "settings" => open_settings(app),
-            "zoom-in" => dispatch(app, Event::ZoomStepped { delta: ZOOM_STEP }),
-            "zoom-out" => dispatch(app, Event::ZoomStepped { delta: -ZOOM_STEP }),
-            "zoom-reset" => dispatch(app, Event::ZoomChanged { factor: 1.0 }),
-            _ => {}
-        })
+        .on_menu_event(|app, event| on_menu_event(app, event.id().as_ref()))
         .on_page_load(|webview, payload| {
             if payload.event() != PageLoadEvent::Finished
                 || !webview.label().starts_with(ACCOUNT_LABEL_PREFIX)
@@ -264,7 +455,7 @@ fn main() {
                 .inner_size(WINDOW_WIDTH, WINDOW_HEIGHT)
                 .build()?;
             window.add_child(
-                WebviewBuilder::new("sidebar", WebviewUrl::App("index.html".into())),
+                WebviewBuilder::new(SIDEBAR_LABEL, WebviewUrl::App("index.html".into())),
                 LogicalPosition::new(0.0, 0.0),
                 LogicalSize::new(SIDEBAR_WIDTH, WINDOW_HEIGHT),
             )?;
@@ -275,23 +466,21 @@ fn main() {
                 Some((Err(e), _)) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
                 Some((Err(e), p)) => Err(format!("Could not read {}: {e}", p.display())),
             };
-            let core = Mutex::new(Core::default());
-            let effects = core
-                .lock()
-                .expect("core lock")
-                .handle(Event::SettingsLoaded {
-                    raw,
-                    fresh_id: uuid::Uuid::new_v4().to_string(),
-                });
             let handle = app.handle().clone();
-            run_effects(&handle, &window, effects);
-            app.manage(core);
-            let appearance = app
+            app.manage(Mutex::new(Core::default()));
+            dispatch(
+                &handle,
+                Event::SettingsLoaded {
+                    raw,
+                    fresh_id: new_id(),
+                },
+            );
+            let appearance = handle
                 .state::<Mutex<Core>>()
                 .lock()
                 .expect("core lock")
                 .appearance_effects();
-            run_effects(&handle, &window, appearance);
+            run_effects(&handle, appearance);
 
             let w = window.clone();
             window.on_window_event(move |event| {
