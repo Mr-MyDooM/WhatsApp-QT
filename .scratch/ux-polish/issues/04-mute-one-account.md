@@ -6,11 +6,11 @@
 
 **Status:** ready-for-agent
 
-- [ ] The account menu has Mute or Unmute, depending on the account's state.
-- [ ] A muted account raises no message notifications. The other accounts still do.
-- [ ] A muted account's unread count still shows, and still counts in the tray and Dock total.
-- [ ] The sidebar shows a mute mark on a muted account, and its accessible name says "muted".
-- [ ] The mute is saved and stays after a restart.
-- [ ] Mute and Snooze are independent. Ending Snooze does not unmute an account, and unmuting does not end Snooze.
-- [ ] GLOSSARY.md has an entry for Mute.
-- [ ] The mute rules are tested through the core.
+- [x] The account menu has Mute or Unmute, depending on the account's state.
+- [x] A muted account raises no message notifications. The other accounts still do.
+- [x] A muted account's unread count still shows, and still counts in the tray and Dock total.
+- [x] The sidebar shows a mute mark on a muted account, and its accessible name says "muted".
+- [x] The mute is saved and stays after a restart.
+- [x] Mute and Snooze are independent. Ending Snooze does not unmute an account, and unmuting does not end Snooze.
+- [x] GLOSSARY.md has an entry for Mute.
+- [x] The mute rules are tested through the core.

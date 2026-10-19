@@ -21,7 +21,10 @@ function render() {
       el.textContent = a.initials;
       const count = unread[a.id];
       el.title = i < MAX_SHORTCUT ? `${a.name}, Cmd+${i + 1}` : a.name;
-      el.setAttribute("aria-label", count ? `${a.name}, ${count} unread` : a.name);
+      el.setAttribute(
+        "aria-label",
+        [a.name, a.muted && "muted", count && `${count} unread`].filter(Boolean).join(", "),
+      );
       if (a.id === active) el.setAttribute("aria-current", "true");
       if (count) {
         const badge = document.createElement("span");
@@ -29,6 +32,12 @@ function render() {
         badge.setAttribute("aria-hidden", "true");
         badge.textContent = count > 99 ? "99+" : String(count);
         el.appendChild(badge);
+      }
+      if (a.muted) {
+        const mark = document.createElement("span");
+        mark.className = "mute";
+        mark.setAttribute("aria-hidden", "true");
+        el.appendChild(mark);
       }
       el.addEventListener("click", () => invoke("switch_account", { id: a.id }));
       el.addEventListener("contextmenu", (e) => {

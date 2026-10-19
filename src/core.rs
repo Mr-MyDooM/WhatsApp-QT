@@ -102,6 +102,9 @@ fn is_known_theme(theme: &str) -> bool {
 pub struct Account {
     pub id: String,
     pub name: String,
+    /// Message notifications are silenced for this account. Old files have no field: false.
+    #[serde(default)]
+    pub muted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -305,6 +308,10 @@ pub enum Event {
         id: String,
         name: String,
     },
+    /// Mute the account if it is unmuted, or unmute it. Unknown accounts are ignored.
+    MuteToggled {
+        id: String,
+    },
     /// The shell started to load an account's page for the first time.
     AccountLoadBegan {
         id: String,
@@ -454,6 +461,7 @@ impl Core {
             Event::AddAccount { fresh_id } => self.add(fresh_id),
             Event::RemoveAccount { id, fresh_id } => self.remove(&id, fresh_id),
             Event::RenameAccount { id, name } => self.rename(&id, &name),
+            Event::MuteToggled { id } => self.toggle_mute(&id),
             Event::AccountLoadBegan { id } => self.begin_load(id, false),
             Event::PageLoaded { id } => self.page_loaded(&id),
             Event::LoadCheckDue { id, attempt } => self.load_check_due(id, attempt),
@@ -604,6 +612,10 @@ impl Core {
         self.load_error.as_deref()
     }
 
+    pub fn is_muted(&self, id: &str) -> bool {
+        self.settings.accounts.iter().any(|a| a.id == id && a.muted)
+    }
+
     pub fn account_name(&self, id: &str) -> Option<&str> {
         self.settings
             .accounts
@@ -630,7 +642,7 @@ impl Core {
             return Vec::new();
         };
         let snoozed = self.settings.snooze_until.is_some_and(|end| now < end);
-        if !n.show_message_notifications || snoozed {
+        if account.muted || !n.show_message_notifications || snoozed {
             return Vec::new();
         }
         let body = if n.show_sender {
@@ -806,7 +818,11 @@ impl Core {
             .find(|name| self.settings.accounts.iter().all(|a| &a.name != name))
             .expect("unbounded range");
         self.settings.active_account = Some(id.clone());
-        self.settings.accounts.push(Account { id, name });
+        self.settings.accounts.push(Account {
+            id,
+            name,
+            muted: false,
+        });
     }
 
     fn add(&mut self, fresh_id: String) -> Vec<Effect> {
@@ -842,6 +858,16 @@ impl Core {
             return Vec::new();
         }
         account.name = name.to_string();
+        let mut effects = vec![self.render()];
+        self.save(&mut effects);
+        effects
+    }
+
+    fn toggle_mute(&mut self, id: &str) -> Vec<Effect> {
+        let Some(account) = self.settings.accounts.iter_mut().find(|a| a.id == id) else {
+            return Vec::new();
+        };
+        account.muted = !account.muted;
         let mut effects = vec![self.render()];
         self.save(&mut effects);
         effects
@@ -970,6 +996,7 @@ impl Core {
             s.accounts.push(Account {
                 id: fresh_id,
                 name: DEFAULT_ACCOUNT_NAME.into(),
+                muted: false,
             });
             changed = true;
         }
@@ -1181,11 +1208,13 @@ mod tests {
                     accounts: vec![
                         Account {
                             id: "a".into(),
-                            name: "A".into()
+                            name: "A".into(),
+                            muted: false
                         },
                         Account {
                             id: "b".into(),
-                            name: "B".into()
+                            name: "B".into(),
+                            muted: false
                         },
                     ],
                     active: "b".into(),
@@ -1409,15 +1438,18 @@ mod tests {
                     accounts: vec![
                         Account {
                             id: "a".into(),
-                            name: "Account 1".into()
+                            name: "Account 1".into(),
+                            muted: false
                         },
                         Account {
                             id: "b".into(),
-                            name: "Account 2".into()
+                            name: "Account 2".into(),
+                            muted: false
                         },
                         Account {
                             id: "c".into(),
-                            name: "Account 3".into()
+                            name: "Account 3".into(),
+                            muted: false
                         },
                     ],
                     active: "b".into(),
@@ -1456,11 +1488,13 @@ mod tests {
                 accounts: vec![
                     Account {
                         id: "a".into(),
-                        name: "Account 1".into()
+                        name: "Account 1".into(),
+                        muted: false
                     },
                     Account {
                         id: "b".into(),
-                        name: "Account 2".into()
+                        name: "Account 2".into(),
+                        muted: false
                     },
                 ],
                 active: "a".into(),
@@ -1991,6 +2025,68 @@ mod tests {
                 url: "https://web.whatsapp.com/send?phone=5".into()
             }]
         );
+    }
+
+    // --- Mute ---
+
+    fn mute(core: &mut Core, id: &str) -> Vec<Effect> {
+        core.handle(Event::MuteToggled { id: id.into() })
+    }
+
+    #[test]
+    fn mute_silences_only_that_account_and_toggles_back() {
+        let mut core = started(TWO);
+        let effects = mute(&mut core, "a");
+        assert_eq!(saved(&effects)["accounts"][0]["muted"], true);
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::RenderSidebar { accounts, .. } if accounts[0].muted && !accounts[1].muted
+        )));
+        assert!(core.is_muted("a") && !core.is_muted("b"));
+        assert!(notify(&mut core, "a", "Alice", "hi").is_empty());
+        assert!(shown(&notify(&mut core, "b", "Bob", "hi")).is_some());
+        mute(&mut core, "a");
+        assert!(!core.is_muted("a"));
+        assert!(shown(&notify(&mut core, "a", "Alice", "hi")).is_some());
+    }
+
+    #[test]
+    fn mute_keeps_the_unread_count_and_is_ignored_for_unknown_accounts() {
+        let mut core = started(TWO);
+        mute(&mut core, "a");
+        assert_eq!(
+            title(&mut core, "a", "(3) WhatsApp"),
+            vec![unread(&[("a", 3)], 3)]
+        );
+        assert!(mute(&mut core, "zz").is_empty());
+    }
+
+    #[test]
+    fn mute_and_snooze_are_independent() {
+        let mut core = started(TWO);
+        mute(&mut core, "a");
+        core.handle(Event::SnoozeSet {
+            minutes: 1,
+            now: 1000,
+        });
+        core.handle(Event::SnoozeCleared);
+        assert!(core.is_muted("a"));
+        assert!(notify_at(&mut core, 1000).is_empty());
+        core.handle(Event::SnoozeSet {
+            minutes: 1,
+            now: 1000,
+        });
+        mute(&mut core, "a");
+        assert!(notify_at(&mut core, 1000).is_empty());
+        assert!(shown(&notify_at(&mut core, 1000 + 61)).is_some());
+    }
+
+    #[test]
+    fn mute_stays_after_restart_and_old_files_load_unmuted() {
+        let mut core = started(TWO);
+        let json = saved(&mute(&mut core, "b")).to_string();
+        let restarted = started(&json);
+        assert!(restarted.is_muted("b") && !restarted.is_muted("a"));
     }
 
     // --- unread count ---
