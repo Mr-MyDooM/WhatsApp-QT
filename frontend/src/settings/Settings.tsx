@@ -5,7 +5,8 @@ import { Bell, Info, Settings as Gear, Users, type LucideIcon } from "lucide-rea
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { cn } from "../lib/utils";
 import { AboutPane, AccountsPane, GeneralPane, NotificationsPane } from "./panes";
-import type { Field, PaneProps, SettingsData } from "./types";
+import type { SettingChange } from "./settings-view";
+import type { PaneProps, SettingsData } from "./types";
 
 const PANE_KEY = "settings-pane";
 
@@ -31,9 +32,9 @@ export function Settings() {
   const [s, setS] = useState<SettingsData | null>(null);
   const [permission, setPermission] = useState("unsupported");
   const [loadError, setLoadError] = useState("");
-  const [fieldError, setFieldError] = useState<{ field: Field; message: string } | null>(null);
+  const [fieldError, setFieldError] = useState<{ field: SettingChange["field"] | "accounts"; message: string } | null>(null);
   // The field of the last change. A save error shows next to it.
-  const lastField = useRef<Field | null>(null);
+  const lastField = useRef<SettingChange["field"] | "accounts" | null>(null);
 
   const load = useCallback(
     () =>
@@ -94,6 +95,12 @@ export function Settings() {
       setFieldError(null);
       lastField.current = field;
     },
+    // The backend refuses bad input with an `app-error`. A failed call shows its error here.
+    update: (change: SettingChange) =>
+      invoke("update_setting", { change }).catch((e) => {
+        setFieldError({ field: change.field, message: String(e) });
+        load();
+      }),
     patch: (p) => setS({ ...s, ...p }),
     errorFor: (field) => (fieldError?.field === field ? fieldError.message : undefined),
   };

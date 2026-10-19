@@ -8,18 +8,12 @@ import { Segmented } from "../components/ui/segmented";
 import { Slider } from "../components/ui/slider";
 import { Switch } from "../components/ui/switch";
 import { useAvatars } from "../lib/useAvatars";
-import type { SettingChange } from "./settings-view";
 import type { PaneProps } from "./types";
 
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 3;
 const ZOOM_STEP = 0.05;
 const ZOOM_PRESETS = [0.9, 1, 1.1, 1.25];
-/** The one command that saves a setting. The backend refuses bad input and reverts the change. */
-function update(change: SettingChange) {
-  invoke("update_setting", { change });
-}
-
 const percent = (factor: number) => `${Math.round(factor * 100)}%`;
 
 const THEMES = [
@@ -28,7 +22,7 @@ const THEMES = [
   { value: "dark", label: "Dark", icon: <Moon size={13} /> },
 ];
 
-export function GeneralPane({ s, change, patch, errorFor }: PaneProps) {
+export function GeneralPane({ s, change, update, patch, errorFor }: PaneProps) {
   // The slider moves this value live. The save runs when the user lets go.
   const [zoom, setZoom] = useState(s.zoom_factor);
   useEffect(() => setZoom(s.zoom_factor), [s.zoom_factor]);
@@ -214,6 +208,7 @@ const TEST_RESULTS: Record<string, string> = {
 export function NotificationsPane({
   s,
   change,
+  update,
   patch,
   errorFor,
   permission,
