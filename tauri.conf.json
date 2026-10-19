@@ -5,8 +5,8 @@
   "build": {
     "frontendDist": "./frontend/dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "pnpm --dir frontend install --frozen-lockfile && pnpm --dir frontend dev",
-    "beforeBuildCommand": "pnpm --dir frontend install --frozen-lockfile && pnpm --dir frontend build"
+    "beforeDevCommand": "pnpm install --frozen-lockfile && pnpm dev",
+    "beforeBuildCommand": "pnpm install --frozen-lockfile && pnpm build"
   },
   "app": {
     "windows": [],
