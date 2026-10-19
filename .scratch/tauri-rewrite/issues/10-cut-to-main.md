@@ -2,7 +2,7 @@
 
 **What to build:** the app ships as a macOS `.app` and `.dmg`, Linux packaging builds the Tauri app, all Qt code is gone, the docs describe the new stack, and the branch merges to `main`.
 
-**Blocked by:** 01, 02, 03, 04, 05, 06, 07, 08, 09
+**Blocked by:** 01, 02, 03, 04, 05, 06, 07, 08, 09, 11, and `.scratch/ux-polish/issues/06` (Rename the app to Pairline)
 
 **Status:** ready-for-agent
 
