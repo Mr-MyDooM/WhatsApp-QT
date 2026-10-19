@@ -6,12 +6,12 @@
 
 **Status:** ready-for-agent
 
-- [ ] The settings window has the panes General, Notifications, Accounts and About. Each existing control is in one pane and still works.
-- [ ] The window title is the pane name.
-- [ ] The window opens on the last pane used.
-- [ ] Notifications shows whether Snooze is on, and until what time.
-- [ ] Accounts lists each account by name. Rename and remove use the same behaviour as the account menu.
-- [ ] About shows the app version and the "not affiliated" line.
-- [ ] Zoom has preset buttons (90, 100, 110 and 125 percent) as well as the slider.
-- [ ] A failed save shows its error next to the control that caused it.
-- [ ] Cmd+, still opens the settings window.
+- [x] The settings window has the panes General, Notifications, Accounts and About. Each existing control is in one pane and still works.
+- [x] The window title is the pane name.
+- [x] The window opens on the last pane used.
+- [x] Notifications shows whether Snooze is on, and until what time.
+- [x] Accounts lists each account by name. Rename and remove use the same behaviour as the account menu.
+- [x] About shows the app version and the "not affiliated" line.
+- [x] Zoom has preset buttons (90, 100, 110 and 125 percent) as well as the slider.
+- [x] A failed save shows its error next to the control that caused it.
+- [x] Cmd+, still opens the settings window.
