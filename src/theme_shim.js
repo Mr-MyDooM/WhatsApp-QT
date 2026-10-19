@@ -4,6 +4,7 @@
   var ID = "app-theme-style";
   window.__pairlineOnConfig(function (config) {
     var old = document.getElementById(ID);
+    if (old && old.textContent === config.theme_css) return;
     if (old) old.remove();
     if (!config.theme_css) return;
     var style = document.createElement("style");

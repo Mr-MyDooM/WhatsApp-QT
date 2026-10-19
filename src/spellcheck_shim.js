@@ -21,6 +21,7 @@
   }
 
   window.__pairlineOnConfig(function (config) {
+    if (config.spellcheck === enabled) return;
     enabled = config.spellcheck;
     apply();
   });
