@@ -198,6 +198,18 @@ pub enum Event {
     ZoomStepped {
         delta: f64,
     },
+    /// The user closed the main window (red button).
+    CloseRequested,
+    /// Tray icon click or tray menu Show/Hide.
+    ToggleWindow {
+        window_visible: bool,
+    },
+    CloseToTrayChanged {
+        enabled: bool,
+    },
+    StartMinimizedChanged {
+        enabled: bool,
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -233,6 +245,9 @@ pub enum Effect {
     ReportError {
         message: String,
     },
+    ShowWindow,
+    HideWindow,
+    Quit,
 }
 
 #[derive(Default)]
@@ -272,6 +287,24 @@ impl Core {
             Event::ThemeChanged { theme } => self.set_theme(theme),
             Event::ZoomChanged { factor } => self.set_zoom(factor),
             Event::ZoomStepped { delta } => self.set_zoom(self.settings.zoom_factor + delta),
+            Event::CloseRequested => vec![if self.settings.close_to_tray {
+                Effect::HideWindow
+            } else {
+                Effect::Quit
+            }],
+            Event::ToggleWindow { window_visible } => vec![if window_visible {
+                Effect::HideWindow
+            } else {
+                Effect::ShowWindow
+            }],
+            Event::CloseToTrayChanged { enabled } => {
+                self.settings.close_to_tray = enabled;
+                self.saved_effects()
+            }
+            Event::StartMinimizedChanged { enabled } => {
+                self.settings.start_minimized = enabled;
+                self.saved_effects()
+            }
         }
     }
 
@@ -281,6 +314,29 @@ impl Core {
 
     pub fn zoom_factor(&self) -> f64 {
         self.settings.zoom_factor
+    }
+
+    pub fn close_to_tray(&self) -> bool {
+        self.settings.close_to_tray
+    }
+
+    pub fn start_minimized(&self) -> bool {
+        self.settings.start_minimized
+    }
+
+    /// The main window is built hidden; show it unless the user wants to start in the tray.
+    pub fn start_window_effects(&self) -> Vec<Effect> {
+        if self.settings.start_minimized {
+            Vec::new()
+        } else {
+            vec![Effect::ShowWindow]
+        }
+    }
+
+    fn saved_effects(&self) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        self.save(&mut effects);
+        effects
     }
 
     /// Effects that bring the webviews in line with the current settings.
@@ -974,5 +1030,64 @@ mod tests {
         let effects = core.appearance_effects();
         assert!(matches!(&effects[0], Effect::ApplyTheme { theme, .. } if theme == "light"));
         assert_eq!(effects[1], Effect::ApplyZoom { factor: 1.2 });
+    }
+
+    #[test]
+    fn close_hides_to_tray_when_enabled_and_quits_when_not() {
+        let mut core = loaded_core();
+        assert_eq!(core.handle(Event::CloseRequested), vec![Effect::Quit]);
+        core.handle(Event::CloseToTrayChanged { enabled: true });
+        assert_eq!(core.handle(Event::CloseRequested), vec![Effect::HideWindow]);
+    }
+
+    #[test]
+    fn tray_click_toggles_window_visibility() {
+        let mut core = loaded_core();
+        assert_eq!(
+            core.handle(Event::ToggleWindow {
+                window_visible: true
+            }),
+            vec![Effect::HideWindow]
+        );
+        assert_eq!(
+            core.handle(Event::ToggleWindow {
+                window_visible: false
+            }),
+            vec![Effect::ShowWindow]
+        );
+    }
+
+    #[test]
+    fn start_minimized_keeps_window_hidden_at_start() {
+        let mut core = loaded_core();
+        assert_eq!(core.start_window_effects(), vec![Effect::ShowWindow]);
+        core.handle(Event::StartMinimizedChanged { enabled: true });
+        assert_eq!(core.start_window_effects(), Vec::new());
+    }
+
+    #[test]
+    fn window_settings_save_and_persist() {
+        let mut core = loaded_core();
+        let effects = core.handle(Event::CloseToTrayChanged { enabled: true });
+        assert_eq!(saved(&effects)["close_to_tray"], true);
+        let effects = core.handle(Event::StartMinimizedChanged { enabled: true });
+        assert_eq!(saved(&effects)["start_minimized"], true);
+        assert!(core.close_to_tray() && core.start_minimized());
+    }
+
+    #[test]
+    fn window_settings_are_not_saved_while_save_is_blocked() {
+        let mut core = Core::default();
+        core.handle(Event::SettingsLoaded {
+            raw: Ok(Some("{not json".into())),
+            fresh_id: "u1".into(),
+        });
+        assert!(!has_save(
+            &core.handle(Event::CloseToTrayChanged { enabled: true })
+        ));
+        assert!(!has_save(
+            &core.handle(Event::StartMinimizedChanged { enabled: true })
+        ));
+        assert!(core.close_to_tray());
     }
 }

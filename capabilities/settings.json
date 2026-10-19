@@ -6,6 +6,8 @@
     "core:event:default",
     "allow-get-settings",
     "allow-set-theme",
-    "allow-set-zoom"
+    "allow-set-zoom",
+    "allow-set-close-to-tray",
+    "allow-set-start-minimized"
   ]
 }

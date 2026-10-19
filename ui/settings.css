@@ -2,6 +2,6 @@
 body { margin: 0; padding: 20px; font: 14px -apple-system, sans-serif; }
 h1 { font-size: 18px; margin: 0 0 16px; }
 label { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
-select, input { flex: 1; }
+select, input[type=range] { flex: 1; }
 output { width: 3em; text-align: right; }
 #error { color: #c0392b; }
