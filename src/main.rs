@@ -57,6 +57,8 @@ const ZOOM_STEP: f64 = 0.1;
 const NOTIFICATION_SCRIPT: &str = include_str!("notification_shim.js");
 /// Reads the user's own avatar in each account page and sends it to `profile_picture`.
 const AVATAR_SCRIPT: &str = include_str!("avatar_shim.js");
+/// Lets the user drag the edge of WhatsApp's chat list to resize it.
+const CHAT_LIST_SCRIPT: &str = include_str!("chat_list_shim.js");
 /// Longest wait for the cache clear at quit. The app exits after this even if WebKit is slow.
 const CACHE_CLEAR_TIMEOUT: Duration = Duration::from_secs(3);
 const AUTOSTART_FAILED_MESSAGE: &str = "Could not change start at login. The setting is unchanged.";
@@ -304,6 +306,10 @@ fn add_account_webview(
     id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let uuid = uuid::Uuid::parse_str(id)?;
+    let chat_list_script = format!(
+        "window.__PAIRLINE_CHAT_LIST_WIDTH__ = {};\n{CHAT_LIST_SCRIPT}",
+        serde_json::json!(chat_list_width(app))
+    );
     let builder = WebviewBuilder::new(
         account_label(id),
         WebviewUrl::External(ACCOUNT_URL.parse()?),
@@ -328,6 +334,7 @@ fn add_account_webview(
     })
     .initialization_script(NOTIFICATION_SCRIPT)
     .initialization_script(AVATAR_SCRIPT)
+    .initialization_script(&chat_list_script)
     // The unread count comes from the page title, read here on the Rust side, so the
     // remote page needs no IPC command for it.
     .on_document_title_changed(|webview, title| {
@@ -1222,6 +1229,34 @@ fn get_settings(core: tauri::State<Mutex<Core>>) -> serde_json::Value {
     })
 }
 
+/// The user dragged the edge of the chat list in an account page. `None` is WhatsApp's own
+/// width. Saves the width and applies it to every account page.
+#[tauri::command]
+fn set_chat_list_width(app: AppHandle, webview: tauri::Webview, width: Option<f64>) {
+    if !webview.label().starts_with(ACCOUNT_LABEL_PREFIX) {
+        return;
+    }
+    dispatch(&app, Event::ChatListResized { width });
+    let js = format!(
+        "window.__pairlineSetChatListWidth && window.__pairlineSetChatListWidth({})",
+        serde_json::json!(chat_list_width(&app))
+    );
+    for (label, account) in app.webviews() {
+        if label.starts_with(ACCOUNT_LABEL_PREFIX) {
+            if let Err(e) = account.eval(&js) {
+                eprintln!("Could not resize the chat list in {label}: {e}");
+            }
+        }
+    }
+}
+
+fn chat_list_width(app: &AppHandle) -> Option<f64> {
+    app.state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .chat_list_width()
+}
+
 #[tauri::command]
 fn set_sidebar_auto_hide(app: AppHandle, enabled: bool) {
     dispatch(&app, Event::SidebarAutoHideChanged { enabled });
@@ -1546,6 +1581,7 @@ fn main() {
             set_clear_cache_on_exit,
             set_close_to_tray,
             set_sidebar_auto_hide,
+            set_chat_list_width,
             set_start_minimized,
             set_notifications,
             notify,

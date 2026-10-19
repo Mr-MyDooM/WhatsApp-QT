@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 const DEFAULT_ACCOUNT_NAME: &str = "Account 1";
 const MIN_ZOOM: f64 = 0.25;
 const MAX_ZOOM: f64 = 3.0;
+/// Chat list width limits in CSS pixels. Keep equal to the limits in `chat_list_shim.js`.
+pub const CHAT_LIST_MIN_WIDTH: f64 = 200.0;
+pub const CHAT_LIST_MAX_WIDTH: f64 = 900.0;
 /// Caps for text from the web page, which is untrusted.
 const MAX_ACCOUNT_NAME_CHARS: usize = 40;
 /// A page that has not finished loading after this long counts as failed.
@@ -158,6 +161,9 @@ pub struct Settings {
     pub sidebar_wide: bool,
     /// Sidebar hides at the window edge and shows over the page on mouse over.
     pub sidebar_auto_hide: bool,
+    /// Width of WhatsApp's chat list in CSS pixels, the same for all accounts. `None` keeps
+    /// WhatsApp's own width.
+    pub chat_list_width: Option<f64>,
     pub zoom_factor: f64,
     pub spellcheck_enabled: bool,
     pub window_width: i32,
@@ -184,6 +190,7 @@ impl Default for Settings {
             close_to_tray: false,
             sidebar_wide: false,
             sidebar_auto_hide: false,
+            chat_list_width: None,
             zoom_factor: 1.0,
             spellcheck_enabled: true,
             window_width: 0,
@@ -318,6 +325,11 @@ pub enum Event {
     SidebarToggled,
     SidebarAutoHideChanged {
         enabled: bool,
+    },
+    /// The user dragged the edge of the chat list in an account page. `None` resets it.
+    /// The value comes from the remote page, so it is checked here.
+    ChatListResized {
+        width: Option<f64>,
     },
     /// Snooze message notifications for all accounts. `now` is Unix seconds.
     SnoozeSet {
@@ -641,6 +653,16 @@ impl Core {
                 self.save(&mut effects);
                 effects
             }
+            Event::ChatListResized { width } => {
+                if width.is_some_and(|w| !w.is_finite()) {
+                    return Vec::new();
+                }
+                self.settings.chat_list_width =
+                    width.map(|w| w.clamp(CHAT_LIST_MIN_WIDTH, CHAT_LIST_MAX_WIDTH));
+                let mut effects = Vec::new();
+                self.save(&mut effects);
+                effects
+            }
             Event::DeepLinkOpened { url } => self.open_deep_link(&url),
             Event::TitleChanged { id, title } => self.set_unread(id, unread_count(&title)),
             Event::AccountDataDeleted { id, result } => match result {
@@ -797,6 +819,10 @@ impl Core {
 
     pub fn sidebar_auto_hide(&self) -> bool {
         self.settings.sidebar_auto_hide
+    }
+
+    pub fn chat_list_width(&self) -> Option<f64> {
+        self.settings.chat_list_width
     }
 
     pub fn start_minimized(&self) -> bool {
@@ -1292,6 +1318,7 @@ mod tests {
         // Missing sidebar field: avatar column.
         assert_eq!(out["sidebar_wide"], false);
         assert_eq!(out["sidebar_auto_hide"], false);
+        assert!(out["chat_list_width"].is_null());
         assert_eq!(
             (out["window_width"].as_i64(), out["window_height"].as_i64()),
             (Some(0), Some(0))
@@ -1334,6 +1361,28 @@ mod tests {
         // The button pins an auto-hidden sidebar as the avatar column.
         core.handle(Event::SidebarToggled);
         assert!(!core.sidebar_wide() && !core.sidebar_auto_hide());
+    }
+
+    #[test]
+    fn chat_list_width_is_clamped_saved_and_reset() {
+        let mut core = Core::default();
+        let effects = core.handle(Event::ChatListResized {
+            width: Some(10_000.0),
+        });
+        assert_eq!(core.chat_list_width(), Some(CHAT_LIST_MAX_WIDTH));
+        assert_eq!(saved(&effects)["chat_list_width"], CHAT_LIST_MAX_WIDTH);
+        core.handle(Event::ChatListResized { width: Some(1.0) });
+        assert_eq!(core.chat_list_width(), Some(CHAT_LIST_MIN_WIDTH));
+        // A bad value from the page changes nothing and saves nothing.
+        assert!(core
+            .handle(Event::ChatListResized {
+                width: Some(f64::NAN)
+            })
+            .is_empty());
+        assert_eq!(core.chat_list_width(), Some(CHAT_LIST_MIN_WIDTH));
+        let effects = core.handle(Event::ChatListResized { width: None });
+        assert_eq!(core.chat_list_width(), None);
+        assert!(saved(&effects)["chat_list_width"].is_null());
     }
 
     #[test]

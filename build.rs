@@ -30,6 +30,7 @@ fn main() {
             "set_notifications",
             "notify",
             "profile_picture",
+            "set_chat_list_width",
             "get_avatars",
             "set_autostart",
             "set_clear_cache_on_exit",
