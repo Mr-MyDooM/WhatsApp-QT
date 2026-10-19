@@ -1,0 +1,3 @@
+body { margin: 0; padding: 8px 6px; background: #202c33; }
+.account { height: 48px; line-height: 48px; text-align: center; font: bold 18px sans-serif; border-radius: 8px; background: #2a3942; color: #fff; }
+.account.active { background: #00a884; }

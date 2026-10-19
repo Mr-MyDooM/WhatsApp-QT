@@ -116,6 +116,7 @@ target/
 # End of https://www.toptal.com/developers/gitignore/api/rust,qt,qtcreator,flatpak
 
 /target
+/gen
 /.flatpak-builder/
 /build-dir
 /file:
