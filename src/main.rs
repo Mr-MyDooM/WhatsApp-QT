@@ -994,6 +994,9 @@ fn refresh_account_menus(app: &AppHandle) {
             Err(e) => eprintln!("Could not build the tray menu: {e}"),
         }
     }
+    if let Err(e) = refresh_switch_items(app) {
+        eprintln!("Could not update the Account menu: {e}");
+    }
     #[cfg(target_os = "macos")]
     dock::set_entries(menu_accounts(app));
 }
@@ -1346,6 +1349,44 @@ const MENU_CTX_RELOAD: &str = "ctx-reload:";
 const MENU_CTX_MUTE: &str = "ctx-mute:";
 const MENU_CTX_REMOVE: &str = "ctx-remove:";
 const MENU_SWITCH_PREFIX: &str = "account-switch-";
+const MENU_ACCOUNT: &str = "account-menu";
+/// Place of the first account item in the Account menu: after New, Remove, Reload, the line,
+/// Next and Previous.
+const MENU_SWITCH_POSITION: usize = 6;
+
+/// Puts one item per account (the first nine) in the Account menu, each with its own
+/// Cmd+number shortcut, so the menu shows the same accounts as the sidebar and settings.
+fn refresh_switch_items(app: &AppHandle) -> tauri::Result<()> {
+    let Some(menu) = app.menu() else {
+        return Ok(());
+    };
+    let Some(submenu) = menu.get(MENU_ACCOUNT).and_then(|m| m.as_submenu().cloned()) else {
+        return Ok(());
+    };
+    for n in 1..=MAX_SWITCH_SHORTCUTS {
+        if let Some(item) = submenu.get(&format!("{MENU_SWITCH_PREFIX}{n}")) {
+            submenu.remove(&item)?;
+        }
+    }
+    for (i, account) in menu_accounts(app)
+        .iter()
+        .take(MAX_SWITCH_SHORTCUTS)
+        .enumerate()
+    {
+        let n = i + 1;
+        submenu.insert(
+            &MenuItem::with_id(
+                app,
+                format!("{MENU_SWITCH_PREFIX}{n}"),
+                &account.label,
+                true,
+                Some(format!("CmdOrCtrl+{n}").as_str()),
+            )?,
+            MENU_SWITCH_POSITION + i,
+        )?;
+    }
+    Ok(())
+}
 
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let app_menu = Submenu::with_items(
@@ -1389,8 +1430,9 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::select_all(app, None)?,
         ],
     )?;
-    let account_menu = Submenu::with_items(
+    let account_menu = Submenu::with_id_and_items(
         app,
+        MENU_ACCOUNT,
         "Account",
         true,
         &[
@@ -1420,15 +1462,6 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             )?,
         ],
     )?;
-    for n in 1..=MAX_SWITCH_SHORTCUTS {
-        account_menu.append(&MenuItem::with_id(
-            app,
-            format!("{MENU_SWITCH_PREFIX}{n}"),
-            format!("Account {n}"),
-            true,
-            Some(format!("CmdOrCtrl+{n}").as_str()),
-        )?)?;
-    }
     account_menu.append(&PredefinedMenuItem::separator(app)?)?;
     account_menu.append(&MenuItem::with_id(
         app,
