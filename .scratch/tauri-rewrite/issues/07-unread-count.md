@@ -4,7 +4,7 @@
 
 **Blocked by:** 02, 04
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] The unread count of each account is read from its page title (`(N)` prefix).
 - [ ] The sidebar shows each account's unread count.

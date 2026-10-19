@@ -4,7 +4,7 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Start-at-login setting through the autostart plugin; idempotent; an error shows a friendly message and logs the detail.
 - [ ] Clear-cache-on-exit setting: on clears cached files of each account at quit, without removing logins.

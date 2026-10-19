@@ -4,7 +4,7 @@
 
 **Blocked by:** 04, 05
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Tray items: Snooze 1 hour, Snooze 8 hours, End Snooze. The tray uses the word "Snooze", not "Mute".
 - [ ] Snooze is stored as an end time in `settings.json`; it is global, ends by itself at its end time, and survives a restart.

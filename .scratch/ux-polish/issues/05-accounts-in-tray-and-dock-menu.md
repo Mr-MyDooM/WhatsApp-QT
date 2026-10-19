@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 (Account menu, rename, reload and error page).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Note:** Tauri has no Dock menu API. The Dock menu probably needs a native `applicationDockMenu:` call through objc2. If that is not practical, ship the tray part, and write down the reason and the Dock part as a new ticket.
 

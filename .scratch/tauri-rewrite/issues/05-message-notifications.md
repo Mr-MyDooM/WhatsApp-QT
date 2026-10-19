@@ -4,7 +4,7 @@
 
 **Blocked by:** 02, 03
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] An injected script replaces `window.Notification` in each account webview and sends title and body through one IPC command. Only the `https://web.whatsapp.com` origin can call it (capability with a remote URL).
 - [ ] The core cuts title and body to fixed maximum lengths, and applies notifications on/off and show-sender.

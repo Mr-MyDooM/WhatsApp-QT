@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Note:** UNUserNotificationCenter needs an app bundle. It may not work under plain `cargo run`. Find out whether an unsigned or ad-hoc signed `.app` from the macOS packaging script is enough. If it needs a paid Developer ID signature, stop and report: code signing is out of scope.
 

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Adding an account makes a new UUID, a default account name, and a new account webview that shows the QR login.
 - [ ] The sidebar lists accounts by account name; clicking one makes it the active account. Switching shows only the active account's webview and keeps each account's state.

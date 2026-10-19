@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] The Qt, cxx-qt and QtWebEngine build is replaced by Tauri 2, pinned to an exact version, with the `unstable` feature. The old Qt source files stay on disk, unbuilt, until ticket 10.
 - [ ] One main window: static sidebar child webview on the left (no npm, no framework), one account child webview filling the rest, bounds updated on resize.

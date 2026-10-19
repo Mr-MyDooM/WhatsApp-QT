@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Deep-link plugin for `whatsapp://`, including the macOS Apple Event.
 - [ ] Single-instance plugin: a link clicked while the app runs goes to the running copy.

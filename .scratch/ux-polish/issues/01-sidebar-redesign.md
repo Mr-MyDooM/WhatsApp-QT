@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] Each account shows an avatar with initials from its account name. One-word names give one letter, longer names give two.
 - [x] The avatar colour comes from the account UUID. It does not change after a restart or a rename.

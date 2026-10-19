@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately). Decision: the user asked for this on 2026-10-19.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Settings shows the current permission status in one of the four states above.
 - [ ] "Allow notifications" shows the macOS prompt when the status is "Not asked yet". The status then shows the user's answer.

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Static HTML settings page, opened with Cmd+,. Each control sends one setting-changed event to the core.
 - [ ] Theme: Light, Dark, System. The theme CSS is injected into each account webview on change and on page load. System follows the OS appearance.

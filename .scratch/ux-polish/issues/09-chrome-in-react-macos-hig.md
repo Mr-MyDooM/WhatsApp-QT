@@ -4,7 +4,7 @@
 
 **Blocked by:** 04 (Mute one account), because it changes the same chrome. Decision: the user picked "macOS native HIG" and "React+TS+Vite+shadcn" on 2026-10-19.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] The frontend is a Vite + React + TypeScript project with Tailwind and shadcn/ui. pnpm, exact versions, lock file committed.
 - [ ] `cargo tauri build` and the macOS packaging script build the frontend first. `cargo tauri dev` runs with hot reload.

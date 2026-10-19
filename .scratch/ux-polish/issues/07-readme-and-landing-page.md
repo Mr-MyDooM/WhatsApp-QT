@@ -6,7 +6,7 @@ Landing page dropped by the user, 2026-10-19. No GitHub Pages.
 
 **Blocked by:** 06 (Rename the app to Pairline).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] The README describes the Tauri app. Nothing in it talks about Qt, QML or cxx-qt.
 - [x] The README has the pitch, the install steps for "Open Anyway", the privacy statement and the "not affiliated" line.

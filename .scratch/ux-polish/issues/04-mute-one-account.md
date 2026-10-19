@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (Sidebar redesign), 02 (Account menu, rename, reload and error page).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] The account menu has Mute or Unmute, depending on the account's state.
 - [x] A muted account raises no message notifications. The other accounts still do.

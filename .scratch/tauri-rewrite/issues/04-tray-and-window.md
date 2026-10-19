@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 03
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Tray icon with Show/Hide and Quit; clicking the tray icon toggles the window.
 - [ ] Close-to-tray setting: on hides the window when it is closed, off quits the app.

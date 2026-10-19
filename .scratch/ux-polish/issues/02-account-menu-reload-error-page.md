@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (Sidebar redesign).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] Right-click on an account opens a native menu with Rename, Reload and Remove.
 - [x] Rename lets the user type a new account name. Empty or whitespace-only names are refused. The name is trimmed and has a maximum length.

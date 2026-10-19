@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 (Account menu, rename, reload and error page).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] The settings window has the panes General, Notifications, Accounts and About. Each existing control is in one pane and still works.
 - [x] The window title is the pane name.

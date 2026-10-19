@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately). Decision: the user picked the name "Pairline".
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Note:** this must land before the cut to main (`.scratch/tauri-rewrite/issues/10`). Users scan the QR code again at the cut, so a bundle ID change after it would make them scan a second time. ADR 0001 says the path and format of `settings.json` do not change: keep the `WhatsAppDesktop` settings path.
 
