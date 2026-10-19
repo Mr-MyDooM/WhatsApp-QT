@@ -4,5 +4,6 @@
   "identifier": "dev.mj.whatsapp-qt",
   "build": { "frontendDist": "./ui" },
   "app": { "windows": [], "withGlobalTauri": true, "security": { "csp": null } },
+  "plugins": { "deep-link": { "desktop": { "schemes": ["whatsapp"] } } },
   "bundle": { "active": false, "icon": ["icons/icon.png"] }
 }

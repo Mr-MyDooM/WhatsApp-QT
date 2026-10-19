@@ -210,6 +210,11 @@ pub enum Event {
     StartMinimizedChanged {
         enabled: bool,
     },
+    /// A URL the OS handed to the app. Untrusted: the core accepts only
+    /// `whatsapp:` and `https://wa.me/` forms.
+    DeepLinkOpened {
+        url: String,
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -248,6 +253,11 @@ pub enum Effect {
     ShowWindow,
     HideWindow,
     Quit,
+    /// Raise the window and load `url` (always on web.whatsapp.com) in the account.
+    OpenChat {
+        id: String,
+        url: String,
+    },
 }
 
 #[derive(Default)]
@@ -305,6 +315,7 @@ impl Core {
                 self.settings.start_minimized = enabled;
                 self.saved_effects()
             }
+            Event::DeepLinkOpened { url } => self.open_deep_link(&url),
         }
     }
 
@@ -377,6 +388,20 @@ impl Core {
         let mut effects = vec![Effect::ApplyZoom { factor }];
         self.save(&mut effects);
         effects
+    }
+
+    /// Opens the chat in the active account. Never adds or removes an account.
+    fn open_deep_link(&self, url: &str) -> Vec<Effect> {
+        let Some(account) = self.settings.accounts.get(self.active_index()) else {
+            return Vec::new();
+        };
+        match chat_url(url) {
+            Some(url) => vec![Effect::OpenChat {
+                id: account.id.clone(),
+                url,
+            }],
+            None => Vec::new(),
+        }
     }
 
     fn active_index(&self) -> usize {
@@ -528,6 +553,34 @@ impl Core {
         }
         effects
     }
+}
+
+/// Rebuilds a deep link as a web.whatsapp.com chat URL, or `None` for anything that is
+/// not a `whatsapp://send` or `https://wa.me/<phone>` link with a digits-only phone.
+/// The result is built from the parsed parts, never from the input string, so the
+/// origin is always web.whatsapp.com.
+fn chat_url(raw: &str) -> Option<String> {
+    let link = url::Url::parse(raw).ok()?;
+    let phone = match (link.scheme(), link.host_str()) {
+        ("whatsapp", Some("send")) => link
+            .query_pairs()
+            .find(|(k, _)| k == "phone")
+            .map(|(_, v)| v.into_owned())?,
+        ("https", Some("wa.me")) if link.username().is_empty() => {
+            link.path().trim_start_matches('/').to_string()
+        }
+        _ => return None,
+    };
+    let phone = phone.strip_prefix('+').unwrap_or(&phone);
+    if phone.is_empty() || !phone.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let mut chat = url::Url::parse("https://web.whatsapp.com/send").expect("constant URL");
+    chat.query_pairs_mut().append_pair("phone", phone);
+    if let Some((_, text)) = link.query_pairs().find(|(k, _)| k == "text") {
+        chat.query_pairs_mut().append_pair("text", &text);
+    }
+    Some(chat.into())
 }
 
 #[cfg(test)]
@@ -1089,5 +1142,80 @@ mod tests {
             &core.handle(Event::StartMinimizedChanged { enabled: true })
         ));
         assert!(core.close_to_tray());
+    }
+
+    fn link(url: &str) -> Vec<Effect> {
+        let mut core = Core::default();
+        core.handle(Event::SettingsLoaded {
+            raw: Ok(None),
+            fresh_id: "u1".into(),
+        });
+        core.handle(Event::DeepLinkOpened { url: url.into() })
+    }
+
+    fn open(url: &str) -> Effect {
+        Effect::OpenChat {
+            id: "u1".into(),
+            url: url.into(),
+        }
+    }
+
+    #[test]
+    fn recognises_both_deep_link_forms_and_opens_them_on_web_whatsapp() {
+        assert_eq!(
+            link("whatsapp://send?phone=123&text=hi%20there"),
+            vec![open(
+                "https://web.whatsapp.com/send?phone=123&text=hi+there"
+            )]
+        );
+        assert_eq!(
+            link("https://wa.me/123"),
+            vec![open("https://web.whatsapp.com/send?phone=123")]
+        );
+        assert_eq!(
+            link("https://wa.me/+123?text=a%26b"),
+            vec![open("https://web.whatsapp.com/send?phone=123&text=a%26b")]
+        );
+    }
+
+    #[test]
+    fn refuses_other_urls_and_never_navigates_off_whatsapp() {
+        for url in [
+            "https://web.whatsapp.com",
+            "https://evil.example/send?phone=1",
+            "http://wa.me/123",
+            "https://wa.me.evil.example/123",
+            "https://wa.me@evil.example/123",
+            "https://wa.me/12x3",
+            "https://wa.me/",
+            "whatsapp://other?phone=1",
+            "whatsapp://send?phone=1/../x",
+            "--start-minimized",
+            "",
+        ] {
+            assert_eq!(link(url), Vec::new(), "{url}");
+        }
+    }
+
+    #[test]
+    fn deep_link_targets_the_active_account_and_changes_no_account() {
+        let mut core = Core::default();
+        core.handle(Event::SettingsLoaded {
+            raw: Ok(None),
+            fresh_id: "u1".into(),
+        });
+        core.handle(Event::AddAccount {
+            fresh_id: "u2".into(),
+        });
+        let effects = core.handle(Event::DeepLinkOpened {
+            url: "https://wa.me/5".into(),
+        });
+        assert_eq!(
+            effects,
+            vec![Effect::OpenChat {
+                id: "u2".into(),
+                url: "https://web.whatsapp.com/send?phone=5".into()
+            }]
+        );
     }
 }
