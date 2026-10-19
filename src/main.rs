@@ -1688,6 +1688,7 @@ fn main() {
                 dock::init(handle.clone());
                 dock::set_entries(menu_accounts(&handle));
             }
+            dispatch(&handle, Event::TraySetUp);
             // Link that launched the app (argv on Linux and Windows, Apple Event on macOS),
             // then links that arrive while it runs.
             let links = app.deep_link();

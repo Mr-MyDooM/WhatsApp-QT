@@ -244,6 +244,8 @@ pub enum Event {
         /// True in a debug build. The login item must never point at a dev binary.
         debug_build: bool,
     },
+    /// The tray and the Dock menu exist. Last step of the start: the core shows the window.
+    TraySetUp,
     /// `fresh_id` is a new UUID for the new account.
     AddAccount {
         fresh_id: String,
@@ -549,6 +551,7 @@ impl Core {
                 self.switch(&id)
             }
             // `ShowUnread` also renders the sidebar. Use it only when there are counts.
+            Event::TraySetUp => self.start_window_effects(),
             Event::SidebarReady => {
                 let view = if self.unread.is_empty() {
                     self.render()
@@ -1277,14 +1280,14 @@ impl Core {
         if changed {
             self.save(&mut effects);
         }
-        // Startup order: appearance, sidebar, login item, start window.
+        // Startup order: appearance, sidebar, login item. The shell then sets up the tray and
+        // the Dock and sends `TraySetUp`, which returns the start window.
         effects.extend(self.appearance_effects());
         effects.push(self.layout_effect());
         effects.push(self.sidebar_state_effect());
         if self.settings.autostart_enabled && !debug_build {
             effects.push(Effect::ReregisterAutostart);
         }
-        effects.extend(self.start_window_effects());
         effects
     }
 }
@@ -1634,14 +1637,23 @@ mod tests {
         assert_eq!(out["accounts"].as_array().unwrap().len(), 1);
     }
 
+    /// The Effects up to and including the first sidebar render.
+    fn until_render(effects: &[Effect]) -> &[Effect] {
+        let end = effects
+            .iter()
+            .position(|e| matches!(e, Effect::RenderSidebar { .. }))
+            .expect("sidebar render");
+        &effects[..=end]
+    }
+
     #[test]
     fn saved_accounts_are_restored_without_a_new_one() {
         let raw =
             r#"{"accounts":[{"id":"a","name":"A"},{"id":"b","name":"B"}],"active_account":"b"}"#;
         let effects = load(Some(raw), "unused");
-        // The last five are the startup Effects, tested on their own.
+        // The Effects after the sidebar render are the startup Effects, tested on their own.
         assert_eq!(
-            effects[..effects.len() - 5],
+            until_render(&effects),
             vec![
                 Effect::CreateAccountWebview { id: "a".into() },
                 Effect::CreateAccountWebview { id: "b".into() },
@@ -1932,7 +1944,7 @@ mod tests {
         let json = saved(&core.handle(Event::SwitchAccount { id: "b".into() })).to_string();
         let effects = load(Some(&json), "unused");
         assert_eq!(
-            effects[..effects.len() - 5],
+            until_render(&effects),
             vec![
                 Effect::CreateAccountWebview { id: "a".into() },
                 Effect::CreateAccountWebview { id: "b".into() },
@@ -2502,7 +2514,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_runs_appearance_sidebar_login_item_then_window() {
+    fn startup_runs_appearance_sidebar_then_login_item() {
         let effects = start_with(r#"{"autostart_enabled":true}"#, false);
         let tail = startup_tail(&effects);
         assert!(matches!(tail[0], Effect::SetWindowScheme { .. }));
@@ -2516,7 +2528,6 @@ mod tests {
                     auto_hide: false
                 },
                 &Effect::ReregisterAutostart,
-                &Effect::ShowWindow
             ]
         );
     }
@@ -2535,13 +2546,11 @@ mod tests {
 
     #[test]
     fn start_minimized_keeps_window_hidden_at_start() {
-        assert_eq!(start_with("{}", false).last(), Some(&Effect::ShowWindow));
-        let effects = start_with(r#"{"start_minimized":true}"#, false);
-        assert!(!effects.contains(&Effect::ShowWindow));
-        assert!(matches!(
-            effects.last(),
-            Some(Effect::EmitSidebarState { .. })
-        ));
+        assert!(!start_with("{}", false).contains(&Effect::ShowWindow));
+        let mut core = started("{}");
+        assert_eq!(core.handle(Event::TraySetUp), vec![Effect::ShowWindow]);
+        let mut core = started(r#"{"start_minimized":true}"#);
+        assert!(core.handle(Event::TraySetUp).is_empty());
     }
 
     #[test]
