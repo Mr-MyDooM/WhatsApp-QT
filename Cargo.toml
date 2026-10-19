@@ -47,7 +47,7 @@ winrt-notification = "0.5"
 
 
 [build-dependencies]
-tauri-build = "=2.7.3"
+tauri-build = { version = "=2.7.3", features = [] }
 
 [profile.release]
 opt-level = "z"
