@@ -3,6 +3,88 @@
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_ACCOUNT_NAME: &str = "Account 1";
+const MIN_ZOOM: f64 = 0.25;
+const MAX_ZOOM: f64 = 3.0;
+
+const DARK_BASE_CSS: &str = r#"
+    /* Dark theme base styles */
+    body, #app, [data-testid="conversation-panel-body"] {
+        background-color: #1e1e1e !important;
+        color: #ffffff !important;
+        font-family: 'Fira Code', 'JetBrains Mono', 'monospace' !important;
+    }
+"#;
+const DARK_CHAT_CSS: &str = r#"
+    /* Dark theme chat styles */
+    [data-testid="chat-list"] {
+        background-color: #2d2d2d !important;
+    }
+    [data-testid="chat"] {
+        background-color: #3d3d3d !important;
+        border-bottom: 1px solid #555 !important;
+    }
+"#;
+const LIGHT_BASE_CSS: &str = r#"
+    /* Light theme base styles */
+    body, #app, [data-testid="conversation-panel-body"] {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+        font-family: 'Fira Code', 'JetBrains Mono', 'monospace' !important;
+    }
+"#;
+const LIGHT_CHAT_CSS: &str = r#"
+    /* Light theme chat styles */
+    [data-testid="chat-list"] {
+        background-color: #f8f9fa !important;
+    }
+    [data-testid="chat"] {
+        background-color: #ffffff !important;
+        border-bottom: 1px solid #e9ecef !important;
+    }
+"#;
+
+/// CSS to inject into account webviews. "system" and unknown names inject nothing.
+pub fn theme_css(theme: &str) -> String {
+    let mut css = String::new();
+    if theme == "dark" {
+        css.push_str(DARK_BASE_CSS);
+        css.push_str(DARK_CHAT_CSS);
+        css.push_str(
+            r#"
+                /* Additional dark theme styles */
+                ._3OtEr, .app, #app, .app-wrapper-web, [data-testid="app-wrapper"] {
+                    background-color: #1e1e1e !important;
+                }
+                ._3j7s9 {
+                    background-color: #2d2d2d !important;
+                }
+                /* WhatsApp specific dark theme */
+                [data-testid="chatlist-header"], [data-testid="chat-header"] {
+                    background-color: #2d2d2d !important;
+                }
+            "#,
+        );
+    } else if theme == "light" {
+        css.push_str(LIGHT_BASE_CSS);
+        css.push_str(LIGHT_CHAT_CSS);
+        css.push_str(
+            r#"
+                /* Additional light theme styles */
+                ._3OtEr, .app, #app, .app-wrapper-web, [data-testid="app-wrapper"] {
+                    background-color: #ffffff !important;
+                }
+                ._3j7s9 {
+                    background-color: #f8f9fa !important;
+                }
+            "#,
+        );
+    }
+    css
+}
+
+fn is_known_theme(theme: &str) -> bool {
+    matches!(theme, "light" | "dark" | "system")
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Account {
@@ -87,14 +169,41 @@ pub enum Event {
         raw: Result<Option<String>, String>,
         fresh_id: String,
     },
+    ThemeChanged {
+        theme: String,
+    },
+    /// Absolute zoom level, clamped to `MIN_ZOOM..=MAX_ZOOM`.
+    ZoomChanged {
+        factor: f64,
+    },
+    /// Relative zoom, for the keyboard shortcuts.
+    ZoomStepped {
+        delta: f64,
+    },
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Effect {
-    CreateAccountWebview { id: String },
-    ShowAccount { id: String },
-    SaveSettings { json: String },
-    ReportError { message: String },
+    CreateAccountWebview {
+        id: String,
+    },
+    ShowAccount {
+        id: String,
+    },
+    /// `theme` is "light", "dark" or "system"; empty `css` removes any injected theme.
+    ApplyTheme {
+        theme: String,
+        css: String,
+    },
+    ApplyZoom {
+        factor: f64,
+    },
+    SaveSettings {
+        json: String,
+    },
+    ReportError {
+        message: String,
+    },
 }
 
 #[derive(Default)]
@@ -109,6 +218,69 @@ impl Core {
     pub fn handle(&mut self, event: Event) -> Vec<Effect> {
         match event {
             Event::SettingsLoaded { raw, fresh_id } => self.load(raw, fresh_id),
+            Event::ThemeChanged { theme } => self.set_theme(theme),
+            Event::ZoomChanged { factor } => self.set_zoom(factor),
+            Event::ZoomStepped { delta } => self.set_zoom(self.settings.zoom_factor + delta),
+        }
+    }
+
+    pub fn theme(&self) -> &str {
+        &self.settings.theme
+    }
+
+    pub fn zoom_factor(&self) -> f64 {
+        self.settings.zoom_factor
+    }
+
+    /// Effects that bring the webviews in line with the current settings.
+    pub fn appearance_effects(&self) -> Vec<Effect> {
+        vec![
+            Effect::ApplyTheme {
+                theme: self.settings.theme.clone(),
+                css: theme_css(&self.settings.theme),
+            },
+            Effect::ApplyZoom {
+                factor: self.settings.zoom_factor,
+            },
+        ]
+    }
+
+    fn set_theme(&mut self, theme: String) -> Vec<Effect> {
+        if !is_known_theme(&theme) {
+            return vec![Effect::ReportError {
+                message: format!("Unknown theme: {theme}"),
+            }];
+        }
+        self.settings.theme = theme.clone();
+        let css = theme_css(&theme);
+        let mut effects = vec![Effect::ApplyTheme { theme, css }];
+        self.push_save(&mut effects);
+        effects
+    }
+
+    fn set_zoom(&mut self, factor: f64) -> Vec<Effect> {
+        if !factor.is_finite() {
+            return vec![Effect::ReportError {
+                message: format!("Invalid zoom level: {factor}"),
+            }];
+        }
+        // Round to 2 decimals so repeated 0.1 steps do not drift (1.2000000000000002).
+        let factor = ((factor * 100.0).round() / 100.0).clamp(MIN_ZOOM, MAX_ZOOM);
+        self.settings.zoom_factor = factor;
+        let mut effects = vec![Effect::ApplyZoom { factor }];
+        self.push_save(&mut effects);
+        effects
+    }
+
+    fn push_save(&self, effects: &mut Vec<Effect>) {
+        if self.save_blocked {
+            return;
+        }
+        match serde_json::to_string_pretty(&self.settings) {
+            Ok(json) => effects.push(Effect::SaveSettings { json }),
+            Err(e) => effects.push(Effect::ReportError {
+                message: format!("Could not serialize settings: {e}"),
+            }),
         }
     }
 
@@ -134,6 +306,15 @@ impl Core {
 
         let s = &mut self.settings;
         let mut changed = false;
+        let zoom = if s.zoom_factor.is_finite() {
+            s.zoom_factor.clamp(MIN_ZOOM, MAX_ZOOM)
+        } else {
+            1.0
+        };
+        if zoom != s.zoom_factor {
+            s.zoom_factor = zoom;
+            changed = true;
+        }
         if s.accounts.is_empty() {
             s.accounts.push(Account {
                 id: fresh_id,
@@ -300,5 +481,149 @@ mod tests {
         assert!(!effects
             .iter()
             .any(|e| matches!(e, Effect::SaveSettings { .. })));
+    }
+
+    fn loaded_core() -> Core {
+        let mut core = Core::default();
+        core.handle(Event::SettingsLoaded {
+            raw: Ok(None),
+            fresh_id: "u1".into(),
+        });
+        core
+    }
+
+    fn theme(core: &mut Core, theme: &str) -> Vec<Effect> {
+        core.handle(Event::ThemeChanged {
+            theme: theme.into(),
+        })
+    }
+
+    fn zoom(core: &mut Core, factor: f64) -> Vec<Effect> {
+        core.handle(Event::ZoomChanged { factor })
+    }
+
+    fn has_save(effects: &[Effect]) -> bool {
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::SaveSettings { .. }))
+    }
+
+    #[test]
+    fn theme_css_covers_each_theme() {
+        let dark = theme_css("dark");
+        assert!(dark.contains("#1e1e1e"), "dark theme must set its base bg");
+        assert!(
+            dark.contains("chatlist-header"),
+            "dark adds WhatsApp overrides"
+        );
+
+        let light = theme_css("light");
+        assert!(
+            light.contains("#ffffff"),
+            "light theme must set its base bg"
+        );
+        assert!(
+            !light.contains("#1e1e1e"),
+            "light must not leak dark colors"
+        );
+
+        // "system" (and anything unrecognised) means "inject nothing".
+        assert!(theme_css("system").is_empty());
+        assert!(theme_css("").is_empty());
+    }
+
+    #[test]
+    fn theme_change_applies_and_saves() {
+        let mut core = loaded_core();
+        let effects = theme(&mut core, "dark");
+        assert!(matches!(&effects[0], Effect::ApplyTheme { theme, css }
+            if theme == "dark" && css.contains("#1e1e1e")));
+        assert_eq!(saved(&effects)["theme"], "dark");
+    }
+
+    #[test]
+    fn system_theme_applies_empty_css() {
+        let mut core = loaded_core();
+        theme(&mut core, "dark");
+        assert_eq!(
+            theme(&mut core, "system")[0],
+            Effect::ApplyTheme {
+                theme: "system".into(),
+                css: String::new()
+            }
+        );
+    }
+
+    #[test]
+    fn unknown_theme_is_rejected_without_saving() {
+        let mut core = loaded_core();
+        let effects = theme(&mut core, "neon");
+        assert!(matches!(effects[..], [Effect::ReportError { .. }]));
+        assert_eq!(core.theme(), "system");
+    }
+
+    #[test]
+    fn zoom_change_applies_and_saves() {
+        let mut core = loaded_core();
+        let effects = zoom(&mut core, 1.5);
+        assert_eq!(effects[0], Effect::ApplyZoom { factor: 1.5 });
+        assert_eq!(saved(&effects)["zoom_factor"], 1.5);
+    }
+
+    #[test]
+    fn zoom_is_clamped() {
+        let mut core = loaded_core();
+        assert_eq!(zoom(&mut core, 9.0)[0], Effect::ApplyZoom { factor: 3.0 });
+        assert_eq!(zoom(&mut core, 0.0)[0], Effect::ApplyZoom { factor: 0.25 });
+    }
+
+    #[test]
+    fn non_finite_zoom_is_rejected() {
+        let mut core = loaded_core();
+        let effects = zoom(&mut core, f64::NAN);
+        assert!(matches!(effects[..], [Effect::ReportError { .. }]));
+        assert_eq!(core.zoom_factor(), 1.0);
+    }
+
+    #[test]
+    fn zoom_steps_without_float_drift() {
+        let mut core = loaded_core();
+        for _ in 0..3 {
+            core.handle(Event::ZoomStepped { delta: 0.1 });
+        }
+        assert_eq!(core.zoom_factor(), 1.3);
+        core.handle(Event::ZoomStepped { delta: -0.1 });
+        assert_eq!(core.zoom_factor(), 1.2);
+    }
+
+    #[test]
+    fn changes_are_not_saved_while_save_is_blocked() {
+        let mut core = Core::default();
+        core.handle(Event::SettingsLoaded {
+            raw: Ok(Some("{not json".into())),
+            fresh_id: "u1".into(),
+        });
+        let effects = theme(&mut core, "dark");
+        assert!(matches!(effects[0], Effect::ApplyTheme { .. }));
+        assert!(!has_save(&effects));
+        assert!(!has_save(&zoom(&mut core, 2.0)));
+    }
+
+    #[test]
+    fn out_of_range_saved_zoom_is_clamped_on_load() {
+        let out = saved(&load(Some(r#"{"zoom_factor":0.0}"#), "u1"));
+        assert_eq!(out["zoom_factor"], 0.25);
+    }
+
+    #[test]
+    fn appearance_effects_reflect_loaded_settings() {
+        let mut core = Core::default();
+        core.handle(Event::SettingsLoaded {
+            raw: Ok(Some(r#"{"theme":"light","zoom_factor":1.2}"#.into())),
+            fresh_id: "u1".into(),
+        });
+        let effects = core.appearance_effects();
+        assert!(matches!(&effects[0], Effect::ApplyTheme { theme, .. } if theme == "light"));
+        assert_eq!(effects[1], Effect::ApplyZoom { factor: 1.2 });
     }
 }

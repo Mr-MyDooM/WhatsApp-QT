@@ -1,0 +1,11 @@
+{
+  "identifier": "settings",
+  "windows": ["settings"],
+  "webviews": ["settings"],
+  "permissions": [
+    "core:event:default",
+    "allow-get-settings",
+    "allow-set-theme",
+    "allow-set-zoom"
+  ]
+}

@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Settings</title>
+<link rel="stylesheet" href="settings.css">
+<h1>Settings</h1>
+<label>Theme
+  <select id="theme">
+    <option value="system">System</option>
+    <option value="light">Light</option>
+    <option value="dark">Dark</option>
+  </select>
+</label>
+<label>Zoom
+  <input id="zoom" type="range" min="0.25" max="3" step="0.05">
+  <output id="zoom-value"></output>
+</label>
+<p id="error" role="alert" hidden></p>
+<script src="settings.js"></script>

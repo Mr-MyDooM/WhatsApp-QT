@@ -3,10 +3,19 @@ mod core;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use tauri::webview::WebviewBuilder;
-use tauri::{LogicalPosition, LogicalSize, Manager, WebviewUrl, WindowBuilder, WindowEvent};
+use tauri::menu::{Menu, MenuItem, MenuItemKind, PredefinedMenuItem};
+use tauri::webview::{PageLoadEvent, WebviewBuilder};
+use tauri::{
+    Emitter, LogicalPosition, LogicalSize, Manager, Theme, WebviewUrl, WebviewWindowBuilder,
+    WindowBuilder, WindowEvent,
+};
 
-use crate::core::{Core, Effect, Event};
+use crate::core::{theme_css, Core, Effect, Event};
+
+const SETTINGS_LABEL: &str = "settings";
+const ZOOM_STEP: f64 = 0.1;
+const SAVE_FAILED_MESSAGE: &str =
+    "Could not save your settings. The change is active until you quit the app.";
 
 const SIDEBAR_WIDTH: f64 = 60.0;
 const WINDOW_WIDTH: f64 = 1200.0;
@@ -86,6 +95,91 @@ fn layout(app: &tauri::AppHandle, window: &tauri::Window, size: tauri::PhysicalS
     }
 }
 
+/// Logs the detail, and shows the friendly message on the settings page if it is open.
+fn report_error(app: &tauri::AppHandle, friendly: &str, detail: &str) {
+    eprintln!("{detail}");
+    let _ = app.emit_to(SETTINGS_LABEL, "app-error", friendly);
+}
+
+/// Empty `css` removes the injected theme.
+fn inject_css(webview: &tauri::Webview, css: &str) {
+    let literal = serde_json::to_string(css).expect("string serializes");
+    let _ = webview.eval(format!(
+        "(function(){{var e=document.getElementById('app-theme-style');if(e)e.remove();\
+         var c={literal};if(!c)return;var s=document.createElement('style');\
+         s.id='app-theme-style';s.textContent=c;document.head.appendChild(s);}})();"
+    ));
+}
+
+/// Runs core effects for a change that comes from a menu item or a settings command.
+fn dispatch(app: &tauri::AppHandle, event: Event) {
+    let Some(window) = app.get_window("main") else {
+        return;
+    };
+    let effects = app
+        .state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .handle(event);
+    run_effects(app, &window, effects);
+}
+
+fn open_settings(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window(SETTINGS_LABEL) {
+        let _ = w.set_focus();
+        return;
+    }
+    let result =
+        WebviewWindowBuilder::new(app, SETTINGS_LABEL, WebviewUrl::App("settings.html".into()))
+            .title("Settings")
+            .inner_size(420.0, 300.0)
+            .build();
+    if let Err(e) = result {
+        eprintln!("Could not open settings window: {e}");
+    }
+}
+
+#[tauri::command]
+fn get_settings(core: tauri::State<Mutex<Core>>) -> serde_json::Value {
+    let core = core.lock().expect("core lock");
+    serde_json::json!({ "theme": core.theme(), "zoom_factor": core.zoom_factor() })
+}
+
+#[tauri::command]
+fn set_theme(app: tauri::AppHandle, theme: String) {
+    dispatch(&app, Event::ThemeChanged { theme });
+}
+
+#[tauri::command]
+fn set_zoom(app: tauri::AppHandle, factor: f64) {
+    dispatch(&app, Event::ZoomChanged { factor });
+}
+
+/// Default menu plus Settings (Cmd+,) in the app menu and zoom items in View.
+fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let menu = Menu::default(app)?;
+    let settings = MenuItem::with_id(app, "settings", "Settings...", true, Some("CmdOrCtrl+,"))?;
+    let items = menu.items()?;
+    if let Some(MenuItemKind::Submenu(app_menu)) = items.first() {
+        app_menu.insert(&settings, 1)?;
+        app_menu.insert(&PredefinedMenuItem::separator(app)?, 2)?;
+    }
+    let view = items
+        .iter()
+        .filter_map(MenuItemKind::as_submenu)
+        .find(|m| m.text().is_ok_and(|t| t == "View"));
+    if let Some(view) = view {
+        for (id, label, key) in [
+            ("zoom-in", "Zoom In", "CmdOrCtrl+="),
+            ("zoom-out", "Zoom Out", "CmdOrCtrl+-"),
+            ("zoom-reset", "Actual Size", "CmdOrCtrl+0"),
+        ] {
+            view.append(&MenuItem::with_id(app, id, label, true, Some(key))?)?;
+        }
+    }
+    Ok(menu)
+}
+
 fn run_effects(app: &tauri::AppHandle, window: &tauri::Window, effects: Vec<Effect>) {
     for effect in effects {
         match effect {
@@ -95,9 +189,29 @@ fn run_effects(app: &tauri::AppHandle, window: &tauri::Window, effects: Vec<Effe
                 }
             }
             Effect::ShowAccount { id } => show_account(app, &id),
+            Effect::ApplyTheme { theme, css } => {
+                let scheme = match theme.as_str() {
+                    "dark" => Some(Theme::Dark),
+                    "light" => Some(Theme::Light),
+                    _ => None,
+                };
+                let _ = window.set_theme(scheme);
+                for (label, webview) in app.webviews() {
+                    if label.starts_with(ACCOUNT_LABEL_PREFIX) {
+                        inject_css(&webview, &css);
+                    }
+                }
+            }
+            Effect::ApplyZoom { factor } => {
+                for (label, webview) in app.webviews() {
+                    if label.starts_with(ACCOUNT_LABEL_PREFIX) {
+                        let _ = webview.set_zoom(factor);
+                    }
+                }
+            }
             Effect::SaveSettings { json } => {
                 let Some(path) = settings_path() else {
-                    eprintln!("Could not find config directory; settings not saved");
+                    report_error(app, SAVE_FAILED_MESSAGE, "Could not find config directory");
                     continue;
                 };
                 let result = path
@@ -105,16 +219,45 @@ fn run_effects(app: &tauri::AppHandle, window: &tauri::Window, effects: Vec<Effe
                     .map_or(Ok(()), std::fs::create_dir_all)
                     .and_then(|()| std::fs::write(&path, json));
                 if let Err(e) = result {
-                    eprintln!("Could not save settings to {}: {e}", path.display());
+                    report_error(
+                        app,
+                        SAVE_FAILED_MESSAGE,
+                        &format!("Could not save settings to {}: {e}", path.display()),
+                    );
                 }
             }
-            Effect::ReportError { message } => eprintln!("{message}"),
+            Effect::ReportError { message } => {
+                report_error(app, "Something went wrong with your settings.", &message)
+            }
         }
     }
 }
 
 fn main() {
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![get_settings, set_theme, set_zoom])
+        .menu(build_menu)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "settings" => open_settings(app),
+            "zoom-in" => dispatch(app, Event::ZoomStepped { delta: ZOOM_STEP }),
+            "zoom-out" => dispatch(app, Event::ZoomStepped { delta: -ZOOM_STEP }),
+            "zoom-reset" => dispatch(app, Event::ZoomChanged { factor: 1.0 }),
+            _ => {}
+        })
+        .on_page_load(|webview, payload| {
+            if payload.event() != PageLoadEvent::Finished
+                || !webview.label().starts_with(ACCOUNT_LABEL_PREFIX)
+            {
+                return;
+            }
+            let (css, zoom) = {
+                let state = webview.app_handle().state::<Mutex<Core>>();
+                let core = state.lock().expect("core lock");
+                (theme_css(core.theme()), core.zoom_factor())
+            };
+            inject_css(webview, &css);
+            let _ = webview.set_zoom(zoom);
+        })
         .setup(|app| {
             let window = WindowBuilder::new(app, "main")
                 .title("WhatsApp")
@@ -143,6 +286,12 @@ fn main() {
             let handle = app.handle().clone();
             run_effects(&handle, &window, effects);
             app.manage(core);
+            let appearance = app
+                .state::<Mutex<Core>>()
+                .lock()
+                .expect("core lock")
+                .appearance_effects();
+            run_effects(&handle, &window, appearance);
 
             let w = window.clone();
             window.on_window_event(move |event| {
