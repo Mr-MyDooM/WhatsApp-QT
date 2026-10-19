@@ -1,6 +1,27 @@
-body { margin: 0; padding: 8px 6px; background: #202c33; }
-.account { height: 48px; line-height: 48px; margin-bottom: 6px; padding: 0 2px; text-align: center; font: bold 11px sans-serif; border-radius: 8px; background: #2a3942; color: #fff; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; user-select: none; }
-.account.active { background: #00a884; }
-.account { position: relative; }
-.unread { position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; padding: 0 3px; box-sizing: border-box; border-radius: 8px; background: #25d366; color: #111b21; font: bold 10px/16px sans-serif; text-align: center; }
-#add { width: 100%; height: 36px; border: 0; border-radius: 8px; background: #2a3942; color: #fff; font: bold 20px sans-serif; cursor: pointer; }
+:root {
+  --bg: #f0f2f5;
+  --add-bg: #dfe3e8;
+  --fg: #111b21;
+  --marker: #00a884;
+  --focus: #005c4b;
+  --pill-bg: #25d366;
+  --pill-fg: #111b21;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #202c33;
+    --add-bg: #2a3942;
+    --fg: #fff;
+    --marker: #25d366;
+    --focus: #8fe9c6;
+  }
+}
+body { margin: 0; padding: 8px 0; background: var(--bg); color: var(--fg); }
+#accounts { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 6px; }
+.account { position: relative; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; font: bold 15px sans-serif; color: #fff; background: hsl(var(--hue) 55% 28%); cursor: pointer; user-select: none; transition: transform 0.15s; }
+.account:hover { transform: scale(1.08); }
+.account.active::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 4px; border-radius: 0 4px 4px 0; background: var(--marker); }
+.account:focus-visible, #add:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.unread { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box; border-radius: 9px; background: var(--pill-bg); color: var(--pill-fg); font: bold 11px/18px sans-serif; text-align: center; }
+#add { display: block; width: 44px; height: 36px; margin: 0 auto; border: 0; border-radius: 18px; background: var(--add-bg); color: var(--fg); font: bold 20px sans-serif; cursor: pointer; }
+@media (prefers-reduced-motion: reduce) { .account { transition: none; } .account:hover { transform: none; } }

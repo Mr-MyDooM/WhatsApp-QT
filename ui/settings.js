@@ -74,4 +74,41 @@ listen("app-error", (e) => {
   load();
 });
 
+const permissionStatus = document.getElementById("permission-status");
+const permissionButton = document.getElementById("permission-button");
+const PERMISSION_LABELS = {
+  allowed: "Allowed",
+  denied: "Not allowed",
+  not_asked: "Not asked yet",
+  no_bundle: "Not available outside the app bundle",
+  unsupported: "Not available on this system",
+};
+const PERMISSION_BUTTONS = {
+  not_asked: ["Allow notifications", "request_notification_permission"],
+  denied: ["Open System Settings", "open_notification_settings"],
+};
+let permissionCommand = null;
+
+function showPermission(status) {
+  permissionStatus.textContent = PERMISSION_LABELS[status] || PERMISSION_LABELS.unsupported;
+  const button = PERMISSION_BUTTONS[status];
+  permissionButton.hidden = !button;
+  permissionCommand = button ? button[1] : null;
+  if (button) permissionButton.textContent = button[0];
+}
+
+function refreshPermission() {
+  return invoke("notification_permission").then(showPermission);
+}
+
+permissionButton.addEventListener("click", () => {
+  if (!permissionCommand) return;
+  invoke(permissionCommand).then((status) => {
+    // Opening System Settings returns nothing: the focus event refreshes the status.
+    if (typeof status === "string") showPermission(status);
+  });
+});
+window.addEventListener("focus", refreshPermission);
+
+refreshPermission();
 load();
