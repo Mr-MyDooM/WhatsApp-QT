@@ -477,6 +477,7 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                             "name": a.name,
                             "initials": initials(&a.name),
                             "hue": avatar_hue(&a.id),
+                            "muted": a.muted,
                         })
                     })
                     .collect();
@@ -636,6 +637,16 @@ fn show_account_menu(app: AppHandle, id: String) {
     let Some(window) = app.get_window("main") else {
         return;
     };
+    let mute_label = if app
+        .state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .is_muted(&id)
+    {
+        "Unmute"
+    } else {
+        "Mute"
+    };
     let result = (|| -> tauri::Result<()> {
         let menu = Menu::with_items(
             &app,
@@ -651,6 +662,13 @@ fn show_account_menu(app: AppHandle, id: String) {
                     &app,
                     format!("{MENU_CTX_RELOAD}{id}"),
                     "Reload",
+                    true,
+                    None::<&str>,
+                )?,
+                &MenuItem::with_id(
+                    &app,
+                    format!("{MENU_CTX_MUTE}{id}"),
+                    mute_label,
                     true,
                     None::<&str>,
                 )?,
@@ -1025,6 +1043,7 @@ const MENU_PREVIOUS: &str = "account-previous";
 const MENU_RELOAD: &str = "account-reload";
 const MENU_CTX_RENAME: &str = "ctx-rename:";
 const MENU_CTX_RELOAD: &str = "ctx-reload:";
+const MENU_CTX_MUTE: &str = "ctx-mute:";
 const MENU_CTX_REMOVE: &str = "ctx-remove:";
 const MENU_SWITCH_PREFIX: &str = "account-switch-";
 
@@ -1190,6 +1209,12 @@ fn on_menu_event(app: &AppHandle, id: &str) {
             app,
             Event::ReloadRequested {
                 id: id[MENU_CTX_RELOAD.len()..].to_string(),
+            },
+        ),
+        _ if id.starts_with(MENU_CTX_MUTE) => dispatch(
+            app,
+            Event::MuteToggled {
+                id: id[MENU_CTX_MUTE.len()..].to_string(),
             },
         ),
         _ if id.starts_with(MENU_CTX_REMOVE) => {
