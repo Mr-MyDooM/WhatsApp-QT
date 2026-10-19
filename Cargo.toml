@@ -8,7 +8,7 @@ license = "MIT"
 repository = "https://github.com/Mr-MyDooM/WhatsApp-QT"
 homepage = "https://mr.mydoom.github.com"
 documentation = "https://github.com/mr.mydoom/whatsapp-qt"
-keywords = ["rust", "qt", "whatsapp"]
+keywords = ["rust", "tauri", "whatsapp"]
 categories = ["gui-utilities", "messaging-tools"]
 readme = "README.md"
 
@@ -46,11 +46,6 @@ objc2-user-notifications = "0.3.2"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSBundle", "NSDate", "NSDictionary", "NSError", "NSObject", "NSSet", "NSString", "NSValue"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSMenu", "NSMenuItem", "NSResponder"] }
 objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKWebsiteDataRecord"] }
-
-# Windows-only: winrt-notification depends on the `windows` crate, which does not
-# build on macOS/Linux. Keep it out of non-Windows builds.
-[target.'cfg(windows)'.dependencies]
-winrt-notification = "0.5"
 
 
 [build-dependencies]

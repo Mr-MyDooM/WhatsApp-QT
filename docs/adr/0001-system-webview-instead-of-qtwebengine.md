@@ -17,7 +17,7 @@ We leave Qt and QtWebEngine for Tauri 2 on the system webview (WKWebView, WebVie
 - Child webviews need Tauri's `unstable` feature, so their API can change in a minor release. Pin the exact Tauri version in `Cargo.toml`, and do each Tauri upgrade as a separate task.
 - Minimum macOS 14: each account gets its own WKWebView data store (`data_store_identifier`), named by the account's UUID. Linux and Windows use a per-account `data_directory`.
 - WhatsApp Web rejects the default WKWebView user agent ("WhatsApp works with Safari 15+"). The app sets a fixed Safari user agent in code. It is not a user setting.
-- WKWebView has no `window.Notification`. One injected shim sends message notifications through IPC on all OSes. The `web.whatsapp.com` origin gets exactly two IPC commands: `notify` and `profile_picture`.
+- WKWebView has no `window.Notification`. One injected shim sends message notifications through IPC on all OSes. The `web.whatsapp.com` origin gets exactly three IPC commands: `notify`, `profile_picture` and `set_chat_list_width` (see the amendments).
 - The first real build must check isolation: with account A logged in, account B still shows the QR code.
 - Linux starts on X11/XWayland only, because child webviews draw at the wrong bounds on native Wayland.
 
@@ -33,3 +33,13 @@ Limits that keep the second command narrow:
 - The picture is a file per account in the app data folder (`avatars/<id>.txt`), not in `settings.json`. Removing the account deletes it.
 - The CSP does not change: `img-src 'self' data:` already covers the picture.
 - The page selector can break when WhatsApp changes its page (see `src/avatar_shim.js`). Then the app shows colored initials.
+
+## Amendment 2026-10-19: chat list width
+
+The user can drag the edge of the WhatsApp chat list to resize it, and all accounts share one saved width. The drag happens inside the page, so the remote origin gets a third command: `set_chat_list_width`.
+
+Limits that keep the third command narrow:
+
+- Calls from webviews that are not `account-*` are ignored.
+- The width is a number or null. Rust drops a value that is not finite and clamps the rest to 200 to 900 CSS pixels. Null gives back WhatsApp's own width.
+- There is no rate limit. The page script calls once per drag (on mouse up) or double click. A hostile page can only make the app save `settings.json` often.
