@@ -6,9 +6,9 @@
 
 **Status:** ready-for-agent
 
-- [ ] Unsigned `.app` and `.dmg` built with `tauri bundle`; the macOS packaging script is replaced or removed.
-- [ ] Linux packaging (deb, rpm, AppImage, Flatpak) builds the Tauri app and runs on X11/XWayland.
-- [ ] Removed: QML, the C++ WebEngine shim, cxx-qt, Qt dependencies, and the unused crates from the cleanup backlog.
-- [ ] CLAUDE.md and README describe the Tauri stack; the cleanup backlog entry is removed.
-- [ ] `cargo build` and `cargo test` exit 0; full manual macOS check of every ticket above passes on the bundled app.
+- [x] Unsigned `.app` and `.dmg` built with `tauri bundle`; the macOS packaging script is replaced or removed.
+- [ ] Linux packaging (deb, rpm, AppImage, Flatpak) builds the Tauri app and runs on X11/XWayland. Deferred by the user (2026-10-19) until Linux work starts.
+- [x] Removed: QML, the C++ WebEngine shim, cxx-qt, Qt dependencies, and the unused crates from the cleanup backlog.
+- [x] CLAUDE.md and README describe the Tauri stack; the cleanup backlog entry is removed.
+- [x] `cargo build` and `cargo test` exit 0; full manual macOS check of every ticket above passes on the bundled app.
 - [ ] The branch merges to `main` after the user approves.
