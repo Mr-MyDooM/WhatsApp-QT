@@ -25,17 +25,9 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use crate::avatar::Avatars;
 use crate::core::{
     avatar_hue, initials, is_account_origin, is_page_local_url, is_whatsapp_frame_origin, Core,
-    Effect, Event, MenuAccount, NotificationBlock, PageTarget,
+    Effect, Event, MenuAccount, NotificationBlock, PageTarget, SIDEBAR_NARROW,
 };
 
-/// Avatar column. Wider than the macOS traffic lights (about 70 px), so they never reach the
-/// account page. Keep the top strip in `frontend/src/sidebar/Sidebar.tsx` for them.
-const SIDEBAR_NARROW: f64 = 72.0;
-const SIDEBAR_WIDE: f64 = 220.0;
-/// Width of the auto-hidden sidebar: the strip at the window edge that shows it on mouse over.
-const SIDEBAR_EDGE: f64 = 6.0;
-/// True while the auto-hidden sidebar shows over the page. Not saved.
-static SIDEBAR_SHOWN: AtomicBool = AtomicBool::new(false);
 const WINDOW_WIDTH: f64 = 1200.0;
 const WINDOW_HEIGHT: f64 = 800.0;
 const ACCOUNT_URL: &str = "https://web.whatsapp.com";
@@ -124,7 +116,7 @@ fn show_load_error(app: &AppHandle, id: &str) {
         (Ok(size), Ok(scale)) => size.to_logical::<f64>(scale),
         _ => return,
     };
-    let (position, size) = content_bounds(sidebar_widths(app).0, size);
+    let (position, size) = content_bounds(page_start(app), size);
     let result = window.add_child(
         WebviewBuilder::new(label, WebviewUrl::App("error.html".into())),
         position,
@@ -396,7 +388,7 @@ fn add_account_webview(
     let size = window
         .inner_size()?
         .to_logical::<f64>(window.scale_factor()?);
-    let (position, size) = content_bounds(sidebar_widths(app).0, size);
+    let (position, size) = content_bounds(page_start(app), size);
     window.add_child(builder, position, size)?;
     Ok(())
 }
@@ -437,29 +429,22 @@ fn show_account(app: &AppHandle, id: &str) {
     }
 }
 
-/// Returns where the page starts and how wide the sidebar webview is. An auto-hidden sidebar
-/// shows over the page, so the page starts at the edge strip.
-fn sidebar_widths(app: &AppHandle) -> (f64, f64) {
-    let core = app.state::<Mutex<Core>>();
-    let core = core.lock().expect("core lock");
-    let full = if core.sidebar_wide() {
-        SIDEBAR_WIDE
-    } else {
-        SIDEBAR_NARROW
-    };
-    if !core.sidebar_auto_hide() {
-        return (full, full);
-    }
-    if SIDEBAR_SHOWN.load(Ordering::Relaxed) {
-        (SIDEBAR_EDGE, full)
-    } else {
-        (SIDEBAR_EDGE, SIDEBAR_EDGE)
-    }
+fn page_start(app: &AppHandle) -> f64 {
+    app.state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .layout()
+        .0
 }
 
-fn layout(app: &AppHandle, window: &tauri::Window, size: tauri::PhysicalSize<u32>) {
+fn layout(
+    app: &AppHandle,
+    window: &tauri::Window,
+    size: tauri::PhysicalSize<u32>,
+    left: f64,
+    sidebar: f64,
+) {
     let size = size.to_logical::<f64>(window.scale_factor().unwrap_or(1.0));
-    let (left, sidebar) = sidebar_widths(app);
     for (label, webview) in app.webviews() {
         if label == SIDEBAR_LABEL {
             let _ = webview.set_size(LogicalSize::new(sidebar, size.height));
@@ -492,14 +477,12 @@ fn emit_sidebar_state(app: &AppHandle) {
     }
 }
 
-fn apply_sidebar(app: &AppHandle) {
-    SIDEBAR_SHOWN.store(false, Ordering::Relaxed);
+fn apply_layout(app: &AppHandle, page_start: f64, sidebar: f64) {
     if let Some(window) = app.get_window("main") {
         if let Ok(size) = window.inner_size() {
-            layout(app, &window, size);
+            layout(app, &window, size, page_start, sidebar);
         }
     }
-    emit_sidebar_state(app);
 }
 
 /// Logs the detail, and shows the friendly message on the settings page if it is open.
@@ -696,7 +679,11 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                     }
                 }
             }
-            Effect::ApplySidebar => apply_sidebar(app),
+            Effect::Layout {
+                page_start,
+                sidebar,
+            } => apply_layout(app, page_start, sidebar),
+            Effect::EmitSidebarState => emit_sidebar_state(app),
             Effect::ShowUnread { counts, total } => show_unread(app, counts, total),
         }
     }
@@ -731,27 +718,23 @@ fn toggle_sidebar(app: AppHandle) {
 /// The mouse entered or left the auto-hidden sidebar: show it over the page, or hide it.
 #[tauri::command]
 fn reveal_sidebar(app: AppHandle, shown: bool) {
-    let auto_hide = app
+    let effects = app
         .state::<Mutex<Core>>()
         .lock()
         .expect("core lock")
-        .sidebar_auto_hide();
-    let Some(window) = app.get_window("main") else {
-        return;
-    };
-    if !auto_hide {
-        return;
-    }
-    SIDEBAR_SHOWN.store(shown, Ordering::Relaxed);
+        .handle(Event::SidebarRevealed { shown });
     // Moving the sidebar into the window again puts it in front of the account pages.
-    if let (true, Some(sidebar)) = (shown, app.get_webview(SIDEBAR_LABEL)) {
+    if let (true, false, Some(window), Some(sidebar)) = (
+        shown,
+        effects.is_empty(),
+        app.get_window("main"),
+        app.get_webview(SIDEBAR_LABEL),
+    ) {
         if let Err(e) = sidebar.reparent(&window) {
             eprintln!("Could not bring the sidebar to the front: {e}");
         }
     }
-    if let Ok(size) = window.inner_size() {
-        layout(&app, &window, size);
-    }
+    run_effects(&app, effects);
 }
 
 #[tauri::command]
@@ -1824,7 +1807,14 @@ fn main() {
 
             let w = window.clone();
             window.on_window_event(move |event| match event {
-                WindowEvent::Resized(size) => layout(&handle, &w, *size),
+                WindowEvent::Resized(size) => {
+                    let (left, sidebar) = handle
+                        .state::<Mutex<Core>>()
+                        .lock()
+                        .expect("core lock")
+                        .layout();
+                    layout(&handle, &w, *size, left, sidebar);
+                }
                 WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
                     dispatch(&handle, Event::CloseRequested);

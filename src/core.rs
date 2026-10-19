@@ -13,6 +13,12 @@ const MAX_ZOOM: f64 = 3.0;
 pub const CHAT_LIST_MIN_WIDTH: f64 = 200.0;
 pub const CHAT_LIST_MAX_WIDTH: f64 = 900.0;
 /// Caps for text from the web page, which is untrusted.
+/// Avatar column. Wider than the macOS traffic lights (about 70 px), so they never reach the
+/// account page. Keep the top strip in `frontend/src/sidebar/Sidebar.tsx` for them.
+pub const SIDEBAR_NARROW: f64 = 72.0;
+const SIDEBAR_WIDE: f64 = 220.0;
+/// Width of the auto-hidden sidebar: the strip at the window edge that shows it on mouse over.
+const SIDEBAR_EDGE: f64 = 6.0;
 const MAX_ACCOUNT_NAME_CHARS: usize = 40;
 /// A page that has not finished loading after this long counts as failed.
 const LOAD_TIMEOUT_SECS: u64 = 30;
@@ -255,6 +261,10 @@ pub enum Event {
     SidebarAutoHideChanged {
         enabled: bool,
     },
+    /// The mouse entered or left the auto-hidden sidebar. Ignored unless auto-hide is on.
+    SidebarRevealed {
+        shown: bool,
+    },
     /// The user dragged the edge of the chat list in an account page. `None` resets it.
     /// The value comes from the remote page, so it is checked here.
     ChatListResized {
@@ -368,8 +378,14 @@ pub enum Effect {
     ClearAccountCaches {
         ids: Vec<String>,
     },
-    /// The sidebar width changed: lay out the webviews and tell the sidebar page.
-    ApplySidebar,
+    /// Where the account pages start and how wide the sidebar webview is. An auto-hidden
+    /// sidebar shows over the page, so the page starts at the edge strip.
+    Layout {
+        page_start: f64,
+        sidebar: f64,
+    },
+    /// Tell the sidebar page which width mode it is in.
+    EmitSidebarState,
     RenderSidebar {
         accounts: Vec<Account>,
         active: String,
@@ -450,6 +466,8 @@ pub struct Core {
     load_error: Option<String>,
     /// Unread count per account UUID; accounts with none are absent. Not saved.
     unread: BTreeMap<String, u32>,
+    /// True while the auto-hidden sidebar shows over the page. Not saved.
+    sidebar_revealed: bool,
 }
 
 impl Core {
@@ -598,15 +616,24 @@ impl Core {
                     (false, false) => (true, false),
                     (true, false) => (false, true),
                 };
-                let mut effects = vec![Effect::ApplySidebar];
+                self.sidebar_revealed = false;
+                let mut effects = vec![self.layout_effect(), Effect::EmitSidebarState];
                 self.save(&mut effects);
                 effects
             }
             Event::SidebarAutoHideChanged { enabled } => {
                 self.settings.sidebar_auto_hide = enabled;
-                let mut effects = vec![Effect::ApplySidebar];
+                self.sidebar_revealed = false;
+                let mut effects = vec![self.layout_effect(), Effect::EmitSidebarState];
                 self.save(&mut effects);
                 effects
+            }
+            Event::SidebarRevealed { shown } => {
+                if !self.settings.sidebar_auto_hide {
+                    return Vec::new();
+                }
+                self.sidebar_revealed = shown;
+                vec![self.layout_effect()]
             }
             Event::ChatListResized { width } => {
                 if width.is_some_and(|w| !w.is_finite()) {
@@ -786,6 +813,28 @@ impl Core {
 
     pub fn close_to_tray(&self) -> bool {
         self.settings.close_to_tray
+    }
+
+    /// Where the page starts and how wide the sidebar webview is.
+    pub fn layout(&self) -> (f64, f64) {
+        let full = if self.settings.sidebar_wide {
+            SIDEBAR_WIDE
+        } else {
+            SIDEBAR_NARROW
+        };
+        match (self.settings.sidebar_auto_hide, self.sidebar_revealed) {
+            (false, _) => (full, full),
+            (true, true) => (SIDEBAR_EDGE, full),
+            (true, false) => (SIDEBAR_EDGE, SIDEBAR_EDGE),
+        }
+    }
+
+    fn layout_effect(&self) -> Effect {
+        let (page_start, sidebar) = self.layout();
+        Effect::Layout {
+            page_start,
+            sidebar,
+        }
     }
 
     pub fn sidebar_wide(&self) -> bool {
@@ -1177,7 +1226,8 @@ impl Core {
         }
         // Startup order: appearance, sidebar, login item, start window.
         effects.extend(self.appearance_effects());
-        effects.push(Effect::ApplySidebar);
+        effects.push(self.layout_effect());
+        effects.push(Effect::EmitSidebarState);
         if self.settings.autostart_enabled && !debug_build {
             effects.push(Effect::ReregisterAutostart);
         }
@@ -1345,6 +1395,76 @@ mod tests {
         assert!(out.get("tabs").is_none() && out.get("current_tab").is_none());
     }
 
+    fn layout_of(effects: &[Effect]) -> (f64, f64) {
+        match effects.first() {
+            Some(Effect::Layout {
+                page_start,
+                sidebar,
+            }) => (*page_start, *sidebar),
+            other => panic!("expected Layout first, got {other:?}"),
+        }
+    }
+
+    fn core_with_sidebar(wide: bool, auto_hide: bool) -> Core {
+        let mut core = Core::default();
+        core.handle(Event::SettingsLoaded {
+            raw: Ok(Some(format!(
+                r#"{{"sidebar_wide": {wide}, "sidebar_auto_hide": {auto_hide}}}"#
+            ))),
+            fresh_id: "u1".into(),
+            debug_build: false,
+        });
+        core
+    }
+
+    #[test]
+    fn layout_is_the_avatar_column_in_narrow_mode() {
+        let mut core = core_with_sidebar(true, false);
+        let effects = core.handle(Event::SidebarToggled);
+        // wide -> auto-hide; go back around to narrow
+        assert_eq!(layout_of(&effects), (6.0, 6.0));
+        let effects = core.handle(Event::SidebarToggled);
+        assert_eq!(layout_of(&effects), (72.0, 72.0));
+        assert_eq!(core.layout(), (72.0, 72.0));
+    }
+
+    #[test]
+    fn layout_is_wide_in_wide_mode() {
+        let mut core = core_with_sidebar(false, false);
+        let effects = core.handle(Event::SidebarToggled);
+        assert_eq!(layout_of(&effects), (220.0, 220.0));
+        assert_eq!(core.layout(), (220.0, 220.0));
+    }
+
+    #[test]
+    fn auto_hide_layout_follows_the_reveal_state() {
+        let mut core = core_with_sidebar(true, false);
+        let effects = core.handle(Event::SidebarAutoHideChanged { enabled: true });
+        assert_eq!(layout_of(&effects), (6.0, 6.0));
+        let effects = core.handle(Event::SidebarRevealed { shown: true });
+        assert_eq!(layout_of(&effects), (6.0, 220.0));
+        assert_eq!(core.layout(), (6.0, 220.0));
+        let effects = core.handle(Event::SidebarRevealed { shown: false });
+        assert_eq!(layout_of(&effects), (6.0, 6.0));
+    }
+
+    #[test]
+    fn reveal_is_ignored_unless_auto_hide_is_on() {
+        let mut core = core_with_sidebar(false, false);
+        assert!(core
+            .handle(Event::SidebarRevealed { shown: true })
+            .is_empty());
+        assert_eq!(core.layout(), (72.0, 72.0));
+    }
+
+    #[test]
+    fn a_width_change_hides_a_revealed_sidebar() {
+        let mut core = core_with_sidebar(false, true);
+        core.handle(Event::SidebarRevealed { shown: true });
+        let effects = core.handle(Event::SidebarAutoHideChanged { enabled: true });
+        assert_eq!(layout_of(&effects), (6.0, 6.0));
+    }
+
     #[test]
     fn sidebar_toggle_goes_narrow_wide_auto_hide_narrow_and_saves() {
         let mut core = Core::default();
@@ -1356,7 +1476,7 @@ mod tests {
         assert!(!core.sidebar_wide() && !core.sidebar_auto_hide());
         let effects = core.handle(Event::SidebarToggled);
         assert!(core.sidebar_wide() && !core.sidebar_auto_hide());
-        assert_eq!(effects[0], Effect::ApplySidebar);
+        assert_eq!(effects[1], Effect::EmitSidebarState);
         assert_eq!(saved(&effects)["sidebar_wide"], true);
         let effects = core.handle(Event::SidebarToggled);
         assert!(!core.sidebar_wide() && core.sidebar_auto_hide());
@@ -1376,7 +1496,7 @@ mod tests {
         });
         let effects = core.handle(Event::SidebarAutoHideChanged { enabled: true });
         assert!(core.sidebar_wide() && core.sidebar_auto_hide());
-        assert_eq!(effects[0], Effect::ApplySidebar);
+        assert_eq!(effects[1], Effect::EmitSidebarState);
         assert_eq!(saved(&effects)["sidebar_auto_hide"], true);
         // The button pins an auto-hidden sidebar as the avatar column.
         core.handle(Event::SidebarToggled);
@@ -1457,9 +1577,9 @@ mod tests {
         let raw =
             r#"{"accounts":[{"id":"a","name":"A"},{"id":"b","name":"B"}],"active_account":"b"}"#;
         let effects = load(Some(raw), "unused");
-        // The last four are the startup Effects, tested on their own.
+        // The last five are the startup Effects, tested on their own.
         assert_eq!(
-            effects[..effects.len() - 4],
+            effects[..effects.len() - 5],
             vec![
                 Effect::CreateAccountWebview { id: "a".into() },
                 Effect::CreateAccountWebview { id: "b".into() },
@@ -1744,7 +1864,7 @@ mod tests {
         let json = saved(&core.handle(Event::SwitchAccount { id: "b".into() })).to_string();
         let effects = load(Some(&json), "unused");
         assert_eq!(
-            effects[..effects.len() - 4],
+            effects[..effects.len() - 5],
             vec![
                 Effect::CreateAccountWebview { id: "a".into() },
                 Effect::CreateAccountWebview { id: "b".into() },
@@ -2351,10 +2471,11 @@ mod tests {
         let tail = startup_tail(&effects);
         assert!(matches!(tail[0], Effect::SetWindowScheme { .. }));
         assert!(matches!(tail[1], Effect::ApplyPageConfig { .. }));
+        assert!(matches!(tail[2], Effect::Layout { .. }));
         assert_eq!(
-            tail[2..],
+            tail[3..],
             [
-                &Effect::ApplySidebar,
+                &Effect::EmitSidebarState,
                 &Effect::ReregisterAutostart,
                 &Effect::ShowWindow
             ]
@@ -2378,7 +2499,7 @@ mod tests {
         assert_eq!(start_with("{}", false).last(), Some(&Effect::ShowWindow));
         let effects = start_with(r#"{"start_minimized":true}"#, false);
         assert!(!effects.contains(&Effect::ShowWindow));
-        assert_eq!(effects.last(), Some(&Effect::ApplySidebar));
+        assert_eq!(effects.last(), Some(&Effect::EmitSidebarState));
     }
 
     #[test]
