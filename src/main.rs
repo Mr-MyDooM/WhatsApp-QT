@@ -18,7 +18,7 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
-use crate::core::{is_account_origin, theme_css, Core, Effect, Event};
+use crate::core::{avatar_hue, initials, is_account_origin, theme_css, Core, Effect, Event};
 
 const SIDEBAR_WIDTH: f64 = 60.0;
 const WINDOW_WIDTH: f64 = 1200.0;
@@ -411,6 +411,17 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
             // Handled in `begin_quit`: it must hold the exit until the clear is done.
             Effect::ClearAccountCaches { .. } => {}
             Effect::RenderSidebar { accounts, active } => {
+                let accounts: Vec<_> = accounts
+                    .iter()
+                    .map(|a| {
+                        serde_json::json!({
+                            "id": a.id,
+                            "name": a.name,
+                            "initials": initials(&a.name),
+                            "hue": avatar_hue(&a.id),
+                        })
+                    })
+                    .collect();
                 let payload = serde_json::json!({ "accounts": accounts, "active": active });
                 if let Err(e) = app.emit_to(SIDEBAR_LABEL, "accounts", payload) {
                     eprintln!("Could not update sidebar: {e}");
