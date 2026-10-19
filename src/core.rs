@@ -222,6 +222,8 @@ pub enum Event {
     SettingsLoaded {
         raw: Result<Option<String>, String>,
         fresh_id: String,
+        /// True in a debug build. The login item must never point at a dev binary.
+        debug_build: bool,
     },
     /// `fresh_id` is a new UUID for the new account.
     AddAccount {
@@ -415,6 +417,9 @@ pub enum Effect {
         target: PageTarget,
         config: PageConfig,
     },
+    /// Register the login item again so it follows a moved or renamed app. A failure is only
+    /// logged: the setting stays as the user chose it.
+    ReregisterAutostart,
     /// Idempotent. If the system refuses, the shell sends `Event::AutostartFailed`.
     SetAutostart {
         enabled: bool,
@@ -518,7 +523,11 @@ pub struct Core {
 impl Core {
     pub fn handle(&mut self, event: Event) -> Vec<Effect> {
         match event {
-            Event::SettingsLoaded { raw, fresh_id } => self.load(raw, fresh_id),
+            Event::SettingsLoaded {
+                raw,
+                fresh_id,
+                debug_build,
+            } => self.load(raw, fresh_id, debug_build),
             Event::AddAccount { fresh_id } => self.add(fresh_id),
             Event::RemoveAccount { id, fresh_id } => self.remove(&id, fresh_id),
             Event::RenameAccount { id, name } => self.rename(&id, &name),
@@ -848,10 +857,6 @@ impl Core {
         }
     }
 
-    pub fn autostart_enabled(&self) -> bool {
-        self.settings.autostart_enabled
-    }
-
     /// Where the page starts and how wide the sidebar webview is.
     pub fn layout(&self) -> (f64, f64) {
         let full = if self.settings.sidebar_wide {
@@ -893,7 +898,7 @@ impl Core {
     }
 
     /// The main window is built hidden; show it unless the user wants to start in the tray.
-    pub fn start_window_effects(&self) -> Vec<Effect> {
+    fn start_window_effects(&self) -> Vec<Effect> {
         if self.settings.start_minimized {
             Vec::new()
         } else {
@@ -940,7 +945,7 @@ impl Core {
     }
 
     /// Effects that bring the webviews in line with the current settings.
-    pub fn appearance_effects(&self) -> Vec<Effect> {
+    fn appearance_effects(&self) -> Vec<Effect> {
         vec![
             Effect::SetWindowScheme {
                 theme: self.settings.theme.clone(),
@@ -1214,7 +1219,12 @@ impl Core {
         effects
     }
 
-    fn load(&mut self, raw: Result<Option<String>, String>, fresh_id: String) -> Vec<Effect> {
+    fn load(
+        &mut self,
+        raw: Result<Option<String>, String>,
+        fresh_id: String,
+        debug_build: bool,
+    ) -> Vec<Effect> {
         let mut effects = Vec::new();
         let parsed = raw.and_then(|r| {
             r.map(|text| {
@@ -1280,6 +1290,14 @@ impl Core {
         if changed {
             self.save(&mut effects);
         }
+        // Startup order: appearance, sidebar, login item, start window.
+        effects.extend(self.appearance_effects());
+        effects.push(self.layout_effect());
+        effects.push(Effect::EmitSidebarState);
+        if self.settings.autostart_enabled && !debug_build {
+            effects.push(Effect::ReregisterAutostart);
+        }
+        effects.extend(self.start_window_effects());
         effects
     }
 }
@@ -1386,6 +1404,7 @@ mod tests {
         Core::default().handle(Event::SettingsLoaded {
             raw: Ok(raw.map(String::from)),
             fresh_id: fresh.into(),
+            debug_build: false,
         })
     }
 
@@ -1459,6 +1478,7 @@ mod tests {
                 r#"{{"sidebar_wide": {wide}, "sidebar_auto_hide": {auto_hide}}}"#
             ))),
             fresh_id: "u1".into(),
+            debug_build: false,
         });
         core
     }
@@ -1517,6 +1537,7 @@ mod tests {
         core.handle(Event::SettingsLoaded {
             raw: Ok(None),
             fresh_id: "u1".into(),
+            debug_build: false,
         });
         assert!(!core.sidebar_wide() && !core.sidebar_auto_hide());
         let effects = core.handle(Event::SidebarToggled);
@@ -1537,6 +1558,7 @@ mod tests {
         core.handle(Event::SettingsLoaded {
             raw: Ok(Some(r#"{"sidebar_wide": true}"#.into())),
             fresh_id: "u1".into(),
+            debug_build: false,
         });
         let effects = core.handle(Event::SidebarAutoHideChanged { enabled: true });
         assert!(core.sidebar_wide() && core.sidebar_auto_hide());
@@ -1588,6 +1610,7 @@ mod tests {
         core.handle(Event::SettingsLoaded {
             raw: Ok(Some(r#"{"sidebar_wide": true}"#.into())),
             fresh_id: "u1".into(),
+            debug_build: false,
         });
         assert!(core.sidebar_wide());
     }
@@ -1619,8 +1642,10 @@ mod tests {
     fn saved_accounts_are_restored_without_a_new_one() {
         let raw =
             r#"{"accounts":[{"id":"a","name":"A"},{"id":"b","name":"B"}],"active_account":"b"}"#;
+        let effects = load(Some(raw), "unused");
+        // The last five are the startup Effects, tested on their own.
         assert_eq!(
-            load(Some(raw), "unused"),
+            effects[..effects.len() - 5],
             vec![
                 Effect::CreateAccountWebview { id: "a".into() },
                 Effect::CreateAccountWebview { id: "b".into() },
@@ -1671,6 +1696,7 @@ mod tests {
         let effects = Core::default().handle(Event::SettingsLoaded {
             raw: Err("permission denied".into()),
             fresh_id: "u1".into(),
+            debug_build: false,
         });
         assert!(matches!(effects[0], Effect::ReportError { .. }));
         assert!(effects.contains(&Effect::ShowAccount { id: "u1".into() }));
@@ -1686,6 +1712,7 @@ mod tests {
         core.handle(Event::SettingsLoaded {
             raw: Ok(Some(raw.into())),
             fresh_id: "unused".into(),
+            debug_build: false,
         });
         core
     }
@@ -1903,7 +1930,7 @@ mod tests {
         let json = saved(&core.handle(Event::SwitchAccount { id: "b".into() })).to_string();
         let effects = load(Some(&json), "unused");
         assert_eq!(
-            effects,
+            effects[..effects.len() - 5],
             vec![
                 Effect::CreateAccountWebview { id: "a".into() },
                 Effect::CreateAccountWebview { id: "b".into() },
@@ -1939,6 +1966,7 @@ mod tests {
         core.handle(Event::SettingsLoaded {
             raw: Ok(Some("{bad".into())),
             fresh_id: "u1".into(),
+            debug_build: false,
         });
         let effects = core.handle(Event::AddAccount {
             fresh_id: "c".into(),
@@ -1982,6 +2010,7 @@ mod tests {
         core.handle(Event::SettingsLoaded {
             raw: Ok(None),
             fresh_id: "u1".into(),
+            debug_build: false,
         });
         core
     }
@@ -2083,6 +2112,7 @@ mod tests {
         core.handle(Event::SettingsLoaded {
             raw: Ok(Some("{not json".into())),
             fresh_id: "u1".into(),
+            debug_build: false,
         });
         let effects = theme(&mut core, "dark");
         assert!(matches!(effects[0], Effect::SetWindowScheme { .. }));
@@ -2098,18 +2128,10 @@ mod tests {
 
     #[test]
     fn appearance_effects_reflect_loaded_settings() {
-        let mut core = Core::default();
-        core.handle(Event::SettingsLoaded {
-            raw: Ok(Some(r#"{"theme":"light","zoom_factor":1.2}"#.into())),
-            fresh_id: "u1".into(),
-        });
-        let effects = core.appearance_effects();
-        assert_eq!(
-            effects[0],
-            Effect::SetWindowScheme {
-                theme: "light".into()
-            }
-        );
+        let effects = start_with(r#"{"theme":"light","zoom_factor":1.2}"#, false);
+        assert!(effects.contains(&Effect::SetWindowScheme {
+            theme: "light".into()
+        }));
         assert_eq!(page_config_of(&effects).zoom, 1.2);
     }
 
@@ -2392,6 +2414,7 @@ mod tests {
         core.handle(Event::SettingsLoaded {
             raw: Ok(Some("{bad".into())),
             fresh_id: "a".into(),
+            debug_build: false,
         });
         let effects = core.handle(Event::SnoozeSet {
             minutes: 60,
@@ -2431,6 +2454,7 @@ mod tests {
         blocked.handle(Event::SettingsLoaded {
             raw: Ok(Some("{bad".into())),
             fresh_id: "u1".into(),
+            debug_build: false,
         });
         assert!(!has_save(&blocked.handle(Event::NotificationsToggled)));
         assert!(!has_save(&blocked.handle(
@@ -2490,12 +2514,58 @@ mod tests {
         assert!(matches!(effects[..], [Effect::ReportError { .. }]));
     }
 
+    fn start_with(raw: &str, debug_build: bool) -> Vec<Effect> {
+        Core::default().handle(Event::SettingsLoaded {
+            raw: Ok(Some(raw.into())),
+            fresh_id: "u1".into(),
+            debug_build,
+        })
+    }
+
+    /// The effects after the last account step, in order.
+    fn startup_tail(effects: &[Effect]) -> Vec<&Effect> {
+        let from = effects
+            .iter()
+            .position(|e| matches!(e, Effect::SetWindowScheme { .. }))
+            .expect("appearance effects");
+        effects[from..].iter().collect()
+    }
+
+    #[test]
+    fn startup_runs_appearance_sidebar_login_item_then_window() {
+        let effects = start_with(r#"{"autostart_enabled":true}"#, false);
+        let tail = startup_tail(&effects);
+        assert!(matches!(tail[0], Effect::SetWindowScheme { .. }));
+        assert!(matches!(tail[1], Effect::ApplyPageConfig { .. }));
+        assert!(matches!(tail[2], Effect::Layout { .. }));
+        assert_eq!(
+            tail[3..],
+            [
+                &Effect::EmitSidebarState,
+                &Effect::ReregisterAutostart,
+                &Effect::ShowWindow
+            ]
+        );
+    }
+
+    #[test]
+    fn startup_without_autostart_skips_the_login_item() {
+        let effects = start_with("{}", false);
+        assert!(!effects.contains(&Effect::ReregisterAutostart));
+    }
+
+    #[test]
+    fn debug_build_never_registers_the_login_item() {
+        let effects = start_with(r#"{"autostart_enabled":true}"#, true);
+        assert!(!effects.contains(&Effect::ReregisterAutostart));
+    }
+
     #[test]
     fn start_minimized_keeps_window_hidden_at_start() {
-        let mut core = loaded_core();
-        assert_eq!(core.start_window_effects(), vec![Effect::ShowWindow]);
-        core.handle(Event::StartMinimizedChanged { enabled: true });
-        assert_eq!(core.start_window_effects(), Vec::new());
+        assert_eq!(start_with("{}", false).last(), Some(&Effect::ShowWindow));
+        let effects = start_with(r#"{"start_minimized":true}"#, false);
+        assert!(!effects.contains(&Effect::ShowWindow));
+        assert_eq!(effects.last(), Some(&Effect::EmitSidebarState));
     }
 
     #[test]
@@ -2514,6 +2584,7 @@ mod tests {
         core.handle(Event::SettingsLoaded {
             raw: Ok(Some("{not json".into())),
             fresh_id: "u1".into(),
+            debug_build: false,
         });
         assert!(!has_save(
             &core.handle(Event::CloseToTrayChanged { enabled: true })
@@ -2529,6 +2600,7 @@ mod tests {
         core.handle(Event::SettingsLoaded {
             raw: Ok(None),
             fresh_id: "u1".into(),
+            debug_build: false,
         });
         core.handle(Event::DeepLinkOpened { url: url.into() })
     }
@@ -2583,6 +2655,7 @@ mod tests {
         core.handle(Event::SettingsLoaded {
             raw: Ok(None),
             fresh_id: "u1".into(),
+            debug_build: false,
         });
         core.handle(Event::AddAccount {
             fresh_id: "u2".into(),
@@ -2781,7 +2854,7 @@ mod tests {
         core.handle(Event::AutostartChanged { enabled: true });
         let effects = core.handle(Event::AutostartFailed { enabled: false });
         assert_eq!(saved(&effects)["autostart_enabled"], false);
-        assert!(!core.autostart_enabled());
+        assert!(!core.settings_view(0).autostart_enabled);
     }
 
     #[test]
@@ -2816,6 +2889,7 @@ mod tests {
         core.handle(Event::SettingsLoaded {
             raw: Ok(Some("{not json".into())),
             fresh_id: "u1".into(),
+            debug_build: false,
         });
         let effects = core.handle(Event::AutostartChanged { enabled: true });
         assert!(!effects
@@ -2844,6 +2918,7 @@ mod tests {
         core.handle(Event::SettingsLoaded {
             raw: Ok(Some("{not json".into())),
             fresh_id: "n".into(),
+            debug_build: false,
         });
         assert!(core.settings_view(0).load_error.is_some());
         let effects = core.handle(Event::AutostartChanged { enabled: true });
@@ -3168,6 +3243,7 @@ mod tests {
         core.handle(Event::SettingsLoaded {
             raw: Ok(Some("{not json".into())),
             fresh_id: "n".into(),
+            debug_build: false,
         });
         assert!(core.settings_view(0).load_error.is_some());
     }

@@ -583,6 +583,12 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                     dispatch(app, Event::AutostartFailed { enabled: !enabled });
                 }
             }
+            // The login item stores the path of the binary that registered it.
+            Effect::ReregisterAutostart => {
+                if let Err(e) = app.autolaunch().enable() {
+                    eprintln!("Could not register start at login again: {e}");
+                }
+            }
             // Handled in `begin_quit`: it must hold the exit until the clear is done.
             Effect::ClearAccountCaches { .. } => {}
             Effect::RenderSidebar { accounts, active } => {
@@ -1689,47 +1695,15 @@ fn main() {
                 Event::SettingsLoaded {
                     raw,
                     fresh_id: new_id(),
+                    debug_build: cfg!(debug_assertions),
                 },
             );
-            let appearance = handle
-                .state::<Mutex<Core>>()
-                .lock()
-                .expect("core lock")
-                .appearance_effects();
-            run_effects(&handle, appearance);
-            let (page_start, sidebar) = handle
-                .state::<Mutex<Core>>()
-                .lock()
-                .expect("core lock")
-                .layout();
-            apply_layout(&handle, page_start, sidebar);
-            emit_sidebar_state(&handle);
-            // The login item stores the path of the binary that registered it. Register it
-            // again at each start so it follows a renamed or moved app. Dev builds skip this,
-            // so a dev run does not point the login item at target/debug.
-            let autostart = handle
-                .state::<Mutex<Core>>()
-                .lock()
-                .expect("core lock")
-                .autostart_enabled();
-            if autostart && !cfg!(debug_assertions) {
-                if let Err(e) = handle.autolaunch().enable() {
-                    eprintln!("Could not register start at login again: {e}");
-                }
-            }
-
             build_tray(&handle)?;
             #[cfg(target_os = "macos")]
             {
                 dock::init(handle.clone());
                 dock::set_entries(menu_accounts(&handle));
             }
-            let start = handle
-                .state::<Mutex<Core>>()
-                .lock()
-                .expect("core lock")
-                .start_window_effects();
-            run_effects(&handle, start);
             // Link that launched the app (argv on Linux and Windows, Apple Event on macOS),
             // then links that arrive while it runs.
             let links = app.deep_link();
