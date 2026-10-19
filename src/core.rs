@@ -17,6 +17,8 @@ const MAX_TITLE_CHARS: usize = 100;
 const MAX_BODY_CHARS: usize = 300;
 const MAX_SOUND_PATH_CHARS: usize = 1024;
 const HIDDEN_SENDER_BODY: &str = "New message";
+const TEST_TITLE: &str = "Test";
+const TEST_BODY: &str = "This is a test notification.";
 
 const DARK_BASE_CSS: &str = r#"
     /* Dark theme base styles */
@@ -190,6 +192,14 @@ impl Default for Settings {
     }
 }
 
+/// Why a message notification is not shown.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NotificationBlock {
+    Off,
+    Snoozed,
+    Muted,
+}
+
 /// What a notification plays.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Sound {
@@ -254,6 +264,10 @@ pub enum Event {
         account_id: String,
         title: String,
         body: String,
+        now: u64,
+    },
+    /// The "Send Test Notification" button. Same rules as a message for the active account.
+    TestNotificationRequested {
         now: u64,
     },
     /// The user clicked a message notification. An unknown or removed account just shows
@@ -510,6 +524,10 @@ impl Core {
                 body,
                 now,
             } => self.notify(&account_id, &title, &body, now),
+            Event::TestNotificationRequested { now } => match self.active_account_id() {
+                Some(id) => self.notify(id, TEST_TITLE, TEST_BODY, now),
+                None => Vec::new(),
+            },
             Event::NotificationClicked { account_id } => {
                 let mut effects = vec![Effect::ShowWindow];
                 effects.extend(self.switch(&account_id));
@@ -664,8 +682,7 @@ impl Core {
         let Some(account) = self.settings.accounts.iter().find(|a| a.id == account_id) else {
             return Vec::new();
         };
-        let snoozed = self.active_snooze_end(now).is_some();
-        if account.muted || !n.show_message_notifications || snoozed {
+        if self.block_for(account, now).is_some() {
             return Vec::new();
         }
         let body = if n.show_sender {
@@ -688,6 +705,29 @@ impl Core {
             body,
             sound,
         }]
+    }
+
+    /// Why the active account gets no message notification now, if it gets none.
+    pub fn notification_block(&self, now: u64) -> Option<NotificationBlock> {
+        let id = self.active_account_id()?;
+        let account = self.settings.accounts.iter().find(|a| a.id == id)?;
+        self.block_for(account, now)
+    }
+
+    fn block_for(&self, account: &Account, now: u64) -> Option<NotificationBlock> {
+        if !self
+            .settings
+            .notification_settings
+            .show_message_notifications
+        {
+            Some(NotificationBlock::Off)
+        } else if self.active_snooze_end(now).is_some() {
+            Some(NotificationBlock::Snoozed)
+        } else if account.muted {
+            Some(NotificationBlock::Muted)
+        } else {
+            None
+        }
     }
 
     /// End of the Snooze in Unix seconds, or `None` when it is off or already over.
@@ -1844,6 +1884,56 @@ mod tests {
         assert_eq!(shown(&e).unwrap().2, &Sound::File("/s.wav".into()));
         let e = change(&mut core, true, "");
         assert_eq!(shown(&e).unwrap().2, &Sound::Default);
+    }
+
+    // --- test notification ---
+
+    fn test_notification(core: &mut Core, now: u64) -> Vec<Effect> {
+        core.handle(Event::TestNotificationRequested { now })
+    }
+
+    #[test]
+    fn test_notification_uses_the_active_account_and_the_normal_rules() {
+        let mut core = started(TWO);
+        let effects = test_notification(&mut core, 0);
+        let (title, body, sound) = shown(&effects).unwrap();
+        assert_eq!(title, "Account 1");
+        assert_eq!(body, "Test: This is a test notification.");
+        assert_eq!(sound, &Sound::Default);
+        core.handle(Event::NotificationSettingsChanged {
+            messages: true,
+            show_sender: false,
+            sound_enabled: false,
+            sound_path: String::new(),
+        });
+        let effects = test_notification(&mut core, 0);
+        let (_, body, sound) = shown(&effects).unwrap();
+        assert_eq!((body, sound), ("New message", &Sound::Off));
+    }
+
+    #[test]
+    fn test_notification_names_why_nothing_is_shown() {
+        let mut core = started(TWO);
+        assert_eq!(core.notification_block(0), None);
+        core.handle(Event::SnoozeSet {
+            minutes: 60,
+            now: 0,
+        });
+        assert_eq!(core.notification_block(0), Some(NotificationBlock::Snoozed));
+        assert!(test_notification(&mut core, 0).is_empty());
+        assert_eq!(core.notification_block(HOUR), None);
+        core.handle(Event::SnoozeCleared);
+        core.handle(Event::NotificationsToggled);
+        assert_eq!(core.notification_block(0), Some(NotificationBlock::Off));
+        assert!(test_notification(&mut core, 0).is_empty());
+    }
+
+    #[test]
+    fn test_notification_is_blocked_when_the_active_account_is_muted() {
+        let mut core = started(TWO);
+        core.handle(Event::MuteToggled { id: "a".into() });
+        assert_eq!(core.notification_block(0), Some(NotificationBlock::Muted));
+        assert!(test_notification(&mut core, 0).is_empty());
     }
 
     // --- Snooze ---

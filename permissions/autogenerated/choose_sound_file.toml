@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-choose-sound-file"
+description = "Enables the choose_sound_file command without any pre-configured scope."
+commands.allow = ["choose_sound_file"]
+
+[[permission]]
+identifier = "deny-choose-sound-file"
+description = "Denies the choose_sound_file command without any pre-configured scope."
+commands.deny = ["choose_sound_file"]

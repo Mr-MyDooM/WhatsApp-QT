@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-end-snooze"
+description = "Enables the end_snooze command without any pre-configured scope."
+commands.allow = ["end_snooze"]
+
+[[permission]]
+identifier = "deny-end-snooze"
+description = "Denies the end_snooze command without any pre-configured scope."
+commands.deny = ["end_snooze"]
