@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { BellOff, PanelLeftClose, PanelLeftOpen, Plus, Settings, type LucideIcon } from "lucide-react";
 import { useEffect, useState, type KeyboardEvent } from "react";
+import { useAvatars } from "../lib/useAvatars";
 import { cn } from "../lib/utils";
 
 // Cmd+1 to Cmd+9 switch accounts; keep equal to MAX_SWITCH_SHORTCUTS in main.rs.
@@ -43,6 +44,7 @@ export function Sidebar() {
   // Unread count per account UUID; accounts with none are absent.
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [wide, setWide] = useState(false);
+  const avatars = useAvatars();
 
   useEffect(() => {
     let stopped = false;
@@ -117,7 +119,11 @@ export function Sidebar() {
                   isActive && "shadow-[0_0_0_2px_var(--accent)]",
                 )}
               >
-                {a.initials}
+                {avatars[a.id] ? (
+                  <img src={avatars[a.id]} alt="" className="size-full rounded-full object-cover" />
+                ) : (
+                  a.initials
+                )}
                 {badge && !wide && (
                   <span className="absolute -right-1.5 -top-1.5 h-[18px] min-w-[18px] rounded-full bg-badge px-1 text-center text-[11px] leading-[18px] font-semibold text-white shadow-thumb">
                     {badge}

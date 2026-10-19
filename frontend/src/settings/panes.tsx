@@ -8,6 +8,7 @@ import { Input } from "../components/ui/input";
 import { Segmented } from "../components/ui/segmented";
 import { Slider } from "../components/ui/slider";
 import { Switch } from "../components/ui/switch";
+import { useAvatars } from "../lib/useAvatars";
 import type { PaneProps } from "./types";
 
 const ZOOM_MIN = 0.25;
@@ -254,10 +255,21 @@ export function NotificationsPane({
 
 export function AccountsPane({ s, change, errorFor }: PaneProps) {
   const error = errorFor("accounts");
+  const avatars = useAvatars();
   return (
     <Group>
       {s.accounts.map((a) => (
         <Row key={a.id} label={a.name}>
+          <span
+            aria-hidden="true"
+            className="flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-segment text-[10px] font-semibold text-secondary"
+          >
+            {avatars[a.id] ? (
+              <img src={avatars[a.id]} alt="" className="size-full object-cover" />
+            ) : (
+              a.name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("")
+            )}
+          </span>
           <Button
             onClick={() => {
               change("accounts");

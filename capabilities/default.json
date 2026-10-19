@@ -10,6 +10,7 @@
     "allow-add-account",
     "allow-switch-account",
     "allow-remove-account",
-    "allow-show-account-menu"
+    "allow-show-account-menu",
+    "allow-get-avatars"
   ]
 }

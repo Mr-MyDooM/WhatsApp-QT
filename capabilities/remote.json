@@ -2,5 +2,5 @@
   "identifier": "remote-notify",
   "remote": { "urls": ["https://web.whatsapp.com/*"] },
   "webviews": ["account-*"],
-  "permissions": ["allow-notify"]
+  "permissions": ["allow-notify", "allow-profile-picture"]
 }

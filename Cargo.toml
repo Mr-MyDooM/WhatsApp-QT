@@ -20,6 +20,8 @@ dirs = "4.0"
 tauri = { version = "=2.12.4", features = ["unstable", "tray-icon", "macos-private-api"] }
 tauri-plugin-window-state = "2"
 uuid = { version = "1", features = ["v4"] }
+# Decodes the profile picture data URL. Already in Cargo.lock (0.22.1) through Tauri: no new crate.
+base64 = "0.22"
 notify-rust = "4.0"
 log = "0.4"
 env_logger = "0.11"
