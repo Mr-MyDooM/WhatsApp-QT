@@ -72,13 +72,14 @@ The scheme is declared in `packaging/WhatsApp-QT.desktop` (`MimeType=x-scheme-ha
 Features left out of the parity bar for the move off Qt. Each needs its own decision before work starts:
 
 - Spellcheck toggle (system webviews have their own spellcheck).
-- User-agent override.
 - Custom download path (`download_path` is stored today but nothing uses it).
 - Account rename (stub at `qml/main.qml:258`).
+- Native Wayland on Linux (child webviews draw at wrong bounds; start with X11/XWayland via `GDK_BACKEND=x11`).
 
 ## Shared background
 
 - Glossary: `GLOSSARY.md`. On term conflicts `GLOSSARY.md` wins. Record a new term there the moment it settles, so specs, tickets, and code names stay consistent.
+- Decisions: `docs/adr/`. 0001: move from QtWebEngine to Tauri 2 on the system webview. Read it before you start work on the rewrite.
 
 ## Agent guide
 
