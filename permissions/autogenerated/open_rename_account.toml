@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-rename-account"
+description = "Enables the open_rename_account command without any pre-configured scope."
+commands.allow = ["open_rename_account"]
+
+[[permission]]
+identifier = "deny-open-rename-account"
+description = "Denies the open_rename_account command without any pre-configured scope."
+commands.deny = ["open_rename_account"]

@@ -1,8 +1,15 @@
 :root { color-scheme: light dark; }
-body { margin: 0; padding: 20px; font: 14px -apple-system, sans-serif; }
+body { margin: 0; padding: 16px 20px; font: 14px -apple-system, sans-serif; }
 h1 { font-size: 18px; margin: 0 0 16px; }
-label { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
-select, input[type=range] { flex: 1; }
+#tabs { display: flex; gap: 6px; justify-content: center; margin-bottom: 16px; }
+#tabs button[aria-selected=true] { font-weight: 600; background: Highlight; color: HighlightText; }
+label { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.field { margin-bottom: 14px; }
+select, input[type=range], input[type=text] { flex: 1; }
 output { width: 3em; text-align: right; }
-#error { color: #c0392b; }
+.presets { display: flex; gap: 6px; }
+.error, #load-error { color: #c0392b; margin: 4px 0 0; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+#accounts { list-style: none; padding: 0; margin: 0; }
+#accounts li { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+#accounts .name { flex: 1; }

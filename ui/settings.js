@@ -13,18 +13,70 @@ const clearCache = document.getElementById("clear-cache");
 const clearCacheRow = document.getElementById("clear-cache-row");
 const closeToTray = document.getElementById("close-to-tray");
 const startMinimized = document.getElementById("start-minimized");
-const error = document.getElementById("error");
+const loadError = document.getElementById("load-error");
+const snoozeStatus = document.getElementById("snooze-status");
+const accountList = document.getElementById("accounts");
+const tabs = Array.from(document.querySelectorAll("#tabs button"));
+const PANE_KEY = "settings-pane";
+
+// The field of the last change. A save error shows next to it.
+let lastField = null;
+
+function fieldOf(el) {
+  return el.closest(".field") || el.closest("section");
+}
+
+function clearErrors() {
+  for (const p of document.querySelectorAll(".error")) p.hidden = true;
+}
+
+function showPane(name) {
+  const tab = tabs.find((t) => t.dataset.pane === name) || tabs[0];
+  for (const t of tabs) t.setAttribute("aria-selected", String(t === tab));
+  for (const s of document.querySelectorAll("section")) {
+    s.hidden = s.id !== "pane-" + tab.dataset.pane;
+  }
+  const title = document.getElementById("pane-" + tab.dataset.pane).dataset.title;
+  document.title = title;
+  window.__TAURI__.window.getCurrentWindow().setTitle(title);
+  try {
+    localStorage.setItem(PANE_KEY, tab.dataset.pane);
+  } catch (_) {
+    // Storage can be off: the window then opens on General.
+  }
+}
+
+for (const t of tabs) t.addEventListener("click", () => showPane(t.dataset.pane));
+
+function changed(el) {
+  clearErrors();
+  lastField = fieldOf(el);
+}
 
 function showZoom(factor) {
   zoom.value = factor;
   zoomValue.textContent = Math.round(factor * 100) + "%";
 }
 
-theme.addEventListener("change", () => invoke("set_theme", { theme: theme.value }));
-zoom.addEventListener("change", () => {
-  showZoom(Number(zoom.value));
-  invoke("set_zoom", { factor: Number(zoom.value) });
+function saveZoom(factor) {
+  showZoom(factor);
+  invoke("set_zoom", { factor });
+}
+
+theme.addEventListener("change", () => {
+  changed(theme);
+  invoke("set_theme", { theme: theme.value });
 });
+zoom.addEventListener("change", () => {
+  changed(zoom);
+  saveZoom(Number(zoom.value));
+});
+for (const b of document.querySelectorAll("[data-zoom]")) {
+  b.addEventListener("click", () => {
+    changed(b);
+    saveZoom(Number(b.dataset.zoom));
+  });
+}
 function saveNotifications() {
   invoke("set_notifications", {
     messages: notifications.checked,
@@ -34,14 +86,19 @@ function saveNotifications() {
   });
 }
 for (const el of [notifications, showSender, soundEnabled, soundPath]) {
-  el.addEventListener("change", saveNotifications);
+  el.addEventListener("change", () => {
+    changed(el);
+    saveNotifications();
+  });
 }
-autostart.addEventListener("change", () =>
-  invoke("set_autostart", { enabled: autostart.checked })
-);
-clearCache.addEventListener("change", () =>
-  invoke("set_clear_cache_on_exit", { enabled: clearCache.checked })
-);
+autostart.addEventListener("change", () => {
+  changed(autostart);
+  invoke("set_autostart", { enabled: autostart.checked });
+});
+clearCache.addEventListener("change", () => {
+  changed(clearCache);
+  invoke("set_clear_cache_on_exit", { enabled: clearCache.checked });
+});
 
 function load() {
   return invoke("get_settings").then((s) => {
@@ -56,20 +113,61 @@ function load() {
     clearCacheRow.hidden = !s.clear_cache_supported;
     closeToTray.checked = s.close_to_tray;
     startMinimized.checked = s.start_minimized;
+    snoozeStatus.textContent = s.snooze_until
+      ? "On until " + new Date(s.snooze_until * 1000).toLocaleString()
+      : "Off";
+    showAccounts(s.accounts);
     if (s.load_error) {
-      error.textContent = s.load_error + " Changes are not saved.";
-      error.hidden = false;
+      loadError.textContent = s.load_error + " Changes are not saved.";
+      loadError.hidden = false;
     }
   });
 }
 
-closeToTray.addEventListener("change", () =>
-  invoke("set_close_to_tray", { enabled: closeToTray.checked }));
-startMinimized.addEventListener("change", () =>
-  invoke("set_start_minimized", { enabled: startMinimized.checked }));
+function showAccounts(accounts) {
+  accountList.replaceChildren(
+    ...accounts.map((a) => {
+      const li = document.createElement("li");
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = a.name;
+      const rename = document.createElement("button");
+      rename.type = "button";
+      rename.textContent = "Rename...";
+      rename.addEventListener("click", () => {
+        changed(accountList);
+        invoke("open_rename_account", { id: a.id });
+      });
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "Remove...";
+      remove.addEventListener("click", () => {
+        changed(accountList);
+        invoke("remove_account", { id: a.id });
+      });
+      li.append(name, rename, remove);
+      return li;
+    })
+  );
+}
+
+closeToTray.addEventListener("change", () => {
+  changed(closeToTray);
+  invoke("set_close_to_tray", { enabled: closeToTray.checked });
+});
+startMinimized.addEventListener("change", () => {
+  changed(startMinimized);
+  invoke("set_start_minimized", { enabled: startMinimized.checked });
+});
 listen("app-error", (e) => {
-  error.textContent = e.payload;
-  error.hidden = false;
+  const slot = lastField && lastField.querySelector(".error");
+  if (slot) {
+    slot.textContent = e.payload;
+    slot.hidden = false;
+  } else {
+    loadError.textContent = e.payload;
+    loadError.hidden = false;
+  }
   // A refused change is reverted in the backend: show the real state again.
   load();
 });
@@ -108,7 +206,22 @@ permissionButton.addEventListener("click", () => {
     if (typeof status === "string") showPermission(status);
   });
 });
-window.addEventListener("focus", refreshPermission);
+// The rename window, the remove dialog and the tray can change state while this window is away.
+window.addEventListener("focus", () => {
+  refreshPermission();
+  load();
+});
 
+const { getName, getVersion } = window.__TAURI__.app;
+getName().then((n) => (document.getElementById("app-name").textContent = n));
+getVersion().then((v) => (document.getElementById("app-version").textContent = v));
+
+let startPane = "general";
+try {
+  startPane = localStorage.getItem(PANE_KEY) || startPane;
+} catch (_) {
+  // Storage can be off: open on General.
+}
+showPane(startPane);
 refreshPermission();
 load();

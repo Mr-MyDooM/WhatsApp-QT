@@ -4,15 +4,15 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>WhatsApp QT</string>
+    <string>Pairline</string>
     <key>CFBundleDisplayName</key>
-    <string>WhatsApp QT</string>
+    <string>Pairline</string>
     <key>CFBundleIdentifier</key>
-    <string>io.github.mrdoom.WhatsAppQT</string>
+    <string>dev.mj.pairline</string>
     <key>CFBundleExecutable</key>
-    <string>WhatsApp-QT</string>
+    <string>Pairline</string>
     <key>CFBundleIconFile</key>
-    <string>WhatsApp-QT.icns</string>
+    <string>icon.icns</string>
     <key>CFBundleVersion</key>
     <string>@VERSION@</string>
     <key>CFBundleShortVersionString</key>
@@ -44,8 +44,8 @@
     </array>
     <!-- WhatsApp Web needs mic/camera for voice and video calls. -->
     <key>NSMicrophoneUsageDescription</key>
-    <string>WhatsApp QT needs microphone access for voice and video calls.</string>
+    <string>Pairline needs microphone access for voice and video calls.</string>
     <key>NSCameraUsageDescription</key>
-    <string>WhatsApp QT needs camera access for video calls.</string>
+    <string>Pairline needs camera access for video calls.</string>
 </dict>
 </plist>

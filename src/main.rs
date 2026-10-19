@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use tauri::menu::{ContextMenu, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::menu::{AboutMetadata, ContextMenu, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::{PageLoadEvent, WebviewBuilder};
 use tauri::{
@@ -713,6 +713,12 @@ fn rename_account(app: AppHandle, id: String, name: String) {
     close_rename(&app);
 }
 
+/// The Rename button of the settings window: opens the same rename window as the account menu.
+#[tauri::command]
+fn open_rename_account(app: AppHandle, id: String) {
+    open_rename(&app, &id);
+}
+
 #[tauri::command]
 fn cancel_rename(app: AppHandle) {
     close_rename(&app);
@@ -878,8 +884,8 @@ fn open_settings(app: &AppHandle) {
     }
     let result =
         WebviewWindowBuilder::new(app, SETTINGS_LABEL, WebviewUrl::App("settings.html".into()))
-            .title("Settings")
-            .inner_size(420.0, 380.0)
+            .title("General")
+            .inner_size(480.0, 420.0)
             .build();
     if let Err(e) = result {
         eprintln!("Could not open settings window: {e}");
@@ -943,6 +949,8 @@ fn get_settings(core: tauri::State<Mutex<Core>>) -> serde_json::Value {
         "clear_cache_supported": cfg!(target_os = "macos"),
         // Set when the settings file was unusable: changes are not saved then.
         "load_error": core.load_error(),
+        "snooze_until": core.active_snooze_end(unix_now()),
+        "accounts": core.accounts(),
     })
 }
 
@@ -996,7 +1004,8 @@ fn set_clear_cache_on_exit(app: AppHandle, enabled: bool) {
 }
 
 const TRAY_ID: &str = "main";
-const APP_NAME: &str = "WhatsApp";
+const APP_NAME: &str = "Pairline";
+const ABOUT_COMMENTS: &str = "An unofficial desktop client for WhatsApp Web.\nNot affiliated with or endorsed by WhatsApp or Meta.";
 const TRAY_TOGGLE: &str = "tray-toggle";
 const TRAY_ACCOUNT_PREFIX: &str = "tray-account-";
 const TRAY_QUIT: &str = "tray-quit";
@@ -1022,10 +1031,17 @@ const MENU_SWITCH_PREFIX: &str = "account-switch-";
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let app_menu = Submenu::with_items(
         app,
-        "WhatsApp",
+        "Pairline",
         true,
         &[
-            &PredefinedMenuItem::about(app, None, None)?,
+            &PredefinedMenuItem::about(
+                app,
+                None,
+                Some(AboutMetadata {
+                    comments: Some(ABOUT_COMMENTS.to_string()),
+                    ..Default::default()
+                }),
+            )?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, MENU_SETTINGS, "Settings...", true, Some("CmdOrCtrl+,"))?,
             &PredefinedMenuItem::separator(app)?,
@@ -1036,7 +1052,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             // Not the predefined quit: it exits without `begin_quit`, so Cmd+Q would skip the
             // cache clear. The Dock menu Quit and macOS logout bypass this item too and go
             // through `RunEvent::ExitRequested`, which calls `begin_quit` as well.
-            &MenuItem::with_id(app, MENU_QUIT, "Quit WhatsApp", true, Some("CmdOrCtrl+Q"))?,
+            &MenuItem::with_id(app, MENU_QUIT, "Quit Pairline", true, Some("CmdOrCtrl+Q"))?,
         ],
     )?;
     // Without an Edit menu, Cmd+C, Cmd+V and friends do nothing in the webviews on macOS.
@@ -1219,6 +1235,7 @@ fn main() {
             show_account_menu,
             rename_account,
             cancel_rename,
+            open_rename_account,
             retry_account,
             get_settings,
             notification_permission,
@@ -1266,7 +1283,7 @@ fn main() {
         })
         .setup(|app| {
             let window = WindowBuilder::new(app, "main")
-                .title("WhatsApp")
+                .title("Pairline")
                 .inner_size(WINDOW_WIDTH, WINDOW_HEIGHT)
                 .visible(false)
                 .build()?;

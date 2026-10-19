@@ -1,14 +1,16 @@
 {
-  "productName": "WhatsApp-QT",
+  "productName": "Pairline",
   "version": "0.1.0",
-  "identifier": "dev.mj.whatsapp-qt",
+  "identifier": "dev.mj.pairline",
   "build": { "frontendDist": "./ui" },
   "app": { "windows": [], "withGlobalTauri": true, "security": { "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; connect-src ipc: http://ipc.localhost" } },
   "plugins": { "deep-link": { "desktop": { "schemes": ["whatsapp"] } } },
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"],
-    "icon": ["icons/icon.png"],
+    "shortDescription": "An unofficial desktop client for WhatsApp Web",
+    "longDescription": "An unofficial desktop client for WhatsApp Web. Not affiliated with or endorsed by WhatsApp or Meta.",
+    "icon": ["icons/icon.png", "icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
     "macOS": { "signingIdentity": "-", "minimumSystemVersion": "14.0" }
   }
 }

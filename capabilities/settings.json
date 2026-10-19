@@ -4,6 +4,11 @@
   "webviews": ["settings"],
   "permissions": [
     "core:event:default",
+    "core:window:allow-set-title",
+    "core:app:allow-name",
+    "core:app:allow-version",
+    "allow-remove-account",
+    "allow-open-rename-account",
     "allow-get-settings",
     "allow-notification-permission",
     "allow-request-notification-permission",
