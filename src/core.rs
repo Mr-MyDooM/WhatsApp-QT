@@ -402,6 +402,10 @@ pub enum Effect {
     CloseAccountWebview {
         id: String,
     },
+    /// Remove the account's stored profile picture and tell the sidebar.
+    RemoveAvatar {
+        id: String,
+    },
     /// Delete the account's data store for good.
     DeleteAccountData {
         id: String,
@@ -1105,6 +1109,7 @@ impl Core {
         self.settings.pending_deletions.push(id.to_string());
         let mut effects = vec![
             Effect::CloseAccountWebview { id: id.to_string() },
+            Effect::RemoveAvatar { id: id.to_string() },
             Effect::DeleteAccountData { id: id.to_string() },
         ];
         if self.settings.accounts.is_empty() {
@@ -1650,6 +1655,16 @@ mod tests {
         assert!(e.contains(&Effect::ShowAccount { id: "a".into() }));
         let e = core.handle(Event::SwitchRelative(-1));
         assert!(e.contains(&Effect::ShowAccount { id: "b".into() }));
+    }
+
+    #[test]
+    fn remove_clears_the_avatar_of_the_removed_account() {
+        let mut core = started(TWO);
+        let effects = core.handle(Event::RemoveAccount {
+            id: "b".into(),
+            fresh_id: "n".into(),
+        });
+        assert!(effects.contains(&Effect::RemoveAvatar { id: "b".into() }));
     }
 
     #[test]
