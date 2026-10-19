@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use tauri::menu::{ContextMenu, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::menu::{AboutMetadata, ContextMenu, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::{PageLoadEvent, WebviewBuilder};
 use tauri::{
@@ -920,7 +920,8 @@ fn set_clear_cache_on_exit(app: AppHandle, enabled: bool) {
 }
 
 const TRAY_ID: &str = "main";
-const APP_NAME: &str = "WhatsApp";
+const APP_NAME: &str = "Pairline";
+const ABOUT_COMMENTS: &str = "An unofficial desktop client for WhatsApp Web.\nNot affiliated with or endorsed by WhatsApp or Meta.";
 const TRAY_TOGGLE: &str = "tray-toggle";
 const TRAY_QUIT: &str = "tray-quit";
 const TRAY_SNOOZE_1H: &str = "tray-snooze-1h";
@@ -945,10 +946,17 @@ const MENU_SWITCH_PREFIX: &str = "account-switch-";
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let app_menu = Submenu::with_items(
         app,
-        "WhatsApp",
+        "Pairline",
         true,
         &[
-            &PredefinedMenuItem::about(app, None, None)?,
+            &PredefinedMenuItem::about(
+                app,
+                None,
+                Some(AboutMetadata {
+                    comments: Some(ABOUT_COMMENTS.to_string()),
+                    ..Default::default()
+                }),
+            )?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, MENU_SETTINGS, "Settings...", true, Some("CmdOrCtrl+,"))?,
             &PredefinedMenuItem::separator(app)?,
@@ -959,7 +967,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             // Not the predefined quit: it exits without `begin_quit`, so Cmd+Q would skip the
             // cache clear. The Dock menu Quit and macOS logout bypass this item too and go
             // through `RunEvent::ExitRequested`, which calls `begin_quit` as well.
-            &MenuItem::with_id(app, MENU_QUIT, "Quit WhatsApp", true, Some("CmdOrCtrl+Q"))?,
+            &MenuItem::with_id(app, MENU_QUIT, "Quit Pairline", true, Some("CmdOrCtrl+Q"))?,
         ],
     )?;
     // Without an Edit menu, Cmd+C, Cmd+V and friends do nothing in the webviews on macOS.
@@ -1190,7 +1198,7 @@ fn main() {
         })
         .setup(|app| {
             let window = WindowBuilder::new(app, "main")
-                .title("WhatsApp")
+                .title("Pairline")
                 .inner_size(WINDOW_WIDTH, WINDOW_HEIGHT)
                 .visible(false)
                 .build()?;

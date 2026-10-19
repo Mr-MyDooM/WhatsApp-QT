@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#3730a3"/>
+    </linearGradient>
+  </defs>
+  <!-- macOS icon grid: 824x824 rounded square centred on a 1024 canvas -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <!-- the link joining the two bubbles -->
+  <line x1="440" y1="430" x2="584" y2="600" stroke="#c7d2fe" stroke-width="52" stroke-linecap="round"/>
+  <!-- bubble one: white, tail bottom left -->
+  <g fill="#ffffff">
+    <rect x="226" y="226" width="300" height="236" rx="86"/>
+    <polygon points="258,420 258,550 380,452"/>
+  </g>
+  <!-- bubble two: pale blue, tail bottom right -->
+  <g fill="#a5b4fc">
+    <rect x="498" y="562" width="300" height="236" rx="86"/>
+    <polygon points="766,756 766,886 644,788"/>
+  </g>
+</svg>
