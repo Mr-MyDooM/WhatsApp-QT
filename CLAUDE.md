@@ -81,6 +81,20 @@ Features left out of the parity bar for the move off Qt. Each needs its own deci
 - Glossary: `GLOSSARY.md`. On term conflicts `GLOSSARY.md` wins. Record a new term there the moment it settles, so specs, tickets, and code names stay consistent.
 - Decisions: `docs/adr/`. 0001: move from QtWebEngine to Tauri 2 on the system webview. Read it before you start work on the rewrite.
 
+## Agent skills
+
+### Issue tracker
+
+Local markdown under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default roles, recorded as a `Status:` line in each issue file. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
 ## Agent guide
 
 - New docs surfaces (`docs/adr/`, `docs/standards/`, `docs/business/`, `design-system/`, `.omc/skills/`, `scripts/`) are created on first real use, and get an index line in this file at that moment. Why: an empty folder reads as an unfilled obligation.
