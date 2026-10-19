@@ -38,6 +38,14 @@ const ACCOUNT_LABEL_PREFIX: &str = "account-";
 const ERROR_LABEL_PREFIX: &str = "error-";
 const RENAME_LABEL: &str = "rename";
 const SIDEBAR_LABEL: &str = "sidebar";
+/// Drag strip above the account pages. The remote page may not move the window, so the
+/// strip is a local page of its own.
+const TITLE_BAR_LABEL: &str = "titlebar";
+/// macOS title bar height. Other platforms keep their native title bar, so no strip.
+#[cfg(target_os = "macos")]
+const TITLE_BAR_HEIGHT: f64 = 28.0;
+#[cfg(not(target_os = "macos"))]
+const TITLE_BAR_HEIGHT: f64 = 0.0;
 const MAX_SWITCH_SHORTCUTS: usize = 9;
 const SETTINGS_LABEL: &str = "settings";
 const ZOOM_STEP: f64 = 0.1;
@@ -88,11 +96,11 @@ fn show_load_error(app: &AppHandle, id: &str) {
         (Ok(size), Ok(scale)) => size.to_logical::<f64>(scale),
         _ => return,
     };
-    let sidebar = sidebar_width(app);
+    let (position, size) = content_bounds(sidebar_width(app), size);
     let result = window.add_child(
         WebviewBuilder::new(label, WebviewUrl::App("error.html".into())),
-        LogicalPosition::new(sidebar, 0.0),
-        LogicalSize::new((size.width - sidebar).max(1.0), size.height),
+        position,
+        size,
     );
     if let Err(e) = result {
         eprintln!("Could not show the error panel for account {id}: {e}");
@@ -330,13 +338,23 @@ fn add_account_webview(
     let size = window
         .inner_size()?
         .to_logical::<f64>(window.scale_factor()?);
-    let sidebar = sidebar_width(app);
-    window.add_child(
-        builder,
-        LogicalPosition::new(sidebar, 0.0),
-        LogicalSize::new((size.width - sidebar).max(1.0), size.height),
-    )?;
+    let (position, size) = content_bounds(sidebar_width(app), size);
+    window.add_child(builder, position, size)?;
     Ok(())
+}
+
+/// Where an account page or its error panel sits: right of the sidebar, under the title bar.
+fn content_bounds(
+    sidebar: f64,
+    size: LogicalSize<f64>,
+) -> (LogicalPosition<f64>, LogicalSize<f64>) {
+    (
+        LogicalPosition::new(sidebar, TITLE_BAR_HEIGHT),
+        LogicalSize::new(
+            (size.width - sidebar).max(1.0),
+            (size.height - TITLE_BAR_HEIGHT).max(1.0),
+        ),
+    )
 }
 
 fn show_main_window(app: &AppHandle) {
@@ -380,12 +398,16 @@ fn layout(app: &AppHandle, window: &tauri::Window, size: tauri::PhysicalSize<u32
     for (label, webview) in app.webviews() {
         if label == SIDEBAR_LABEL {
             let _ = webview.set_size(LogicalSize::new(sidebar, size.height));
-        } else if label.starts_with(ACCOUNT_LABEL_PREFIX) || label.starts_with(ERROR_LABEL_PREFIX) {
+        } else if label == TITLE_BAR_LABEL {
             let _ = webview.set_position(LogicalPosition::new(sidebar, 0.0));
             let _ = webview.set_size(LogicalSize::new(
                 (size.width - sidebar).max(1.0),
-                size.height,
+                TITLE_BAR_HEIGHT,
             ));
+        } else if label.starts_with(ACCOUNT_LABEL_PREFIX) || label.starts_with(ERROR_LABEL_PREFIX) {
+            let (position, bounds) = content_bounds(sidebar, size);
+            let _ = webview.set_position(position);
+            let _ = webview.set_size(bounds);
         }
     }
 }
@@ -1537,6 +1559,14 @@ fn main() {
                 sidebar,
                 LogicalPosition::new(0.0, 0.0),
                 LogicalSize::new(SIDEBAR_NARROW, WINDOW_HEIGHT),
+            )?;
+            // Transparent, so the strip shows the same sidebar material as the avatar column.
+            #[cfg(target_os = "macos")]
+            window.add_child(
+                WebviewBuilder::new(TITLE_BAR_LABEL, WebviewUrl::App("titlebar.html".into()))
+                    .transparent(true),
+                LogicalPosition::new(SIDEBAR_NARROW, 0.0),
+                LogicalSize::new(WINDOW_WIDTH - SIDEBAR_NARROW, TITLE_BAR_HEIGHT),
             )?;
 
             let raw = match settings_path().map(|p| (std::fs::read_to_string(&p), p)) {
