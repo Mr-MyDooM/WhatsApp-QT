@@ -8,8 +8,8 @@
 
 **Note:** Tauri has no Dock menu API. The Dock menu probably needs a native `applicationDockMenu:` call through objc2. If that is not practical, ship the tray part, and write down the reason and the Dock part as a new ticket.
 
-- [ ] The tray menu lists each account by name, with its unread count if it is above 0.
-- [ ] Click an account in the tray to show the window and make that account active.
+- [x] The tray menu lists each account by name, with its unread count if it is above 0.
+- [x] Click an account in the tray to show the window and make that account active.
 - [ ] On macOS the Dock menu has the same list and the same behaviour.
-- [ ] The lists update after add, remove, rename and unread count changes.
-- [ ] The existing tray items (Snooze, End Snooze, Quit) still work.
+- [x] The lists update after add, remove, rename and unread count changes.
+- [x] The existing tray items (Snooze, End Snooze, Quit) still work.
