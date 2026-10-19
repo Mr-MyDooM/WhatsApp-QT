@@ -12,6 +12,8 @@ QtWebEngine is a build-time dependency, not only a runtime one: `build.rs` links
 
 There is no CI. Verify builds locally, on macOS first.
 
+Rust code uses default `rustfmt` settings (no `rustfmt.toml`). Run `cargo fmt` before each commit; done when `cargo fmt --check` exits 0.
+
 ## Architecture
 
 ### Rust Backend (`src/`)

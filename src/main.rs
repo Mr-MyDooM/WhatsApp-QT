@@ -30,16 +30,26 @@ fn add_account_webview(
     id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let uuid = uuid::Uuid::parse_str(id)?;
-    let builder = WebviewBuilder::new(account_label(id), WebviewUrl::External(ACCOUNT_URL.parse()?))
-        .user_agent(USER_AGENT);
+    let builder = WebviewBuilder::new(
+        account_label(id),
+        WebviewUrl::External(ACCOUNT_URL.parse()?),
+    )
+    .user_agent(USER_AGENT);
     #[cfg(target_os = "macos")]
     let builder = builder.data_store_identifier(*uuid.as_bytes());
     #[cfg(not(target_os = "macos"))]
-    let builder = builder.data_directory(app.path().app_data_dir()?.join("accounts").join(uuid.to_string()));
+    let builder = builder.data_directory(
+        app.path()
+            .app_data_dir()?
+            .join("accounts")
+            .join(uuid.to_string()),
+    );
     #[cfg(target_os = "macos")]
     let _ = app;
 
-    let size = window.inner_size()?.to_logical::<f64>(window.scale_factor()?);
+    let size = window
+        .inner_size()?
+        .to_logical::<f64>(window.scale_factor()?);
     window.add_child(
         builder,
         LogicalPosition::new(SIDEBAR_WIDTH, 0.0),
@@ -52,7 +62,11 @@ fn show_account(app: &tauri::AppHandle, id: &str) {
     let active = account_label(id);
     for (label, webview) in app.webviews() {
         if label.starts_with(ACCOUNT_LABEL_PREFIX) {
-            let _ = if label == active { webview.show() } else { webview.hide() };
+            let _ = if label == active {
+                webview.show()
+            } else {
+                webview.hide()
+            };
         }
     }
 }
@@ -64,7 +78,10 @@ fn layout(app: &tauri::AppHandle, window: &tauri::Window, size: tauri::PhysicalS
             let _ = webview.set_size(LogicalSize::new(SIDEBAR_WIDTH, size.height));
         } else if label.starts_with(ACCOUNT_LABEL_PREFIX) {
             let _ = webview.set_position(LogicalPosition::new(SIDEBAR_WIDTH, 0.0));
-            let _ = webview.set_size(LogicalSize::new((size.width - SIDEBAR_WIDTH).max(1.0), size.height));
+            let _ = webview.set_size(LogicalSize::new(
+                (size.width - SIDEBAR_WIDTH).max(1.0),
+                size.height,
+            ));
         }
     }
 }
@@ -116,10 +133,13 @@ fn main() {
                 Some((Err(e), p)) => Err(format!("Could not read {}: {e}", p.display())),
             };
             let core = Mutex::new(Core::default());
-            let effects = core.lock().expect("core lock").handle(Event::SettingsLoaded {
-                raw,
-                fresh_id: uuid::Uuid::new_v4().to_string(),
-            });
+            let effects = core
+                .lock()
+                .expect("core lock")
+                .handle(Event::SettingsLoaded {
+                    raw,
+                    fresh_id: uuid::Uuid::new_v4().to_string(),
+                });
             let handle = app.handle().clone();
             run_effects(&handle, &window, effects);
             app.manage(core);

@@ -83,7 +83,10 @@ pub enum Event {
     /// `raw` is the settings file content, `Ok(None)` when there is no file,
     /// `Err` when the file exists but cannot be read.
     /// `fresh_id` is a new UUID, used only when no account exists yet.
-    SettingsLoaded { raw: Result<Option<String>, String>, fresh_id: String },
+    SettingsLoaded {
+        raw: Result<Option<String>, String>,
+        fresh_id: String,
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -112,8 +115,11 @@ impl Core {
     fn load(&mut self, raw: Result<Option<String>, String>, fresh_id: String) -> Vec<Effect> {
         let mut effects = Vec::new();
         let parsed = raw.and_then(|r| {
-            r.map(|text| serde_json::from_str::<Settings>(&text).map_err(|e| format!("Settings file is malformed: {e}")))
-                .transpose()
+            r.map(|text| {
+                serde_json::from_str::<Settings>(&text)
+                    .map_err(|e| format!("Settings file is malformed: {e}"))
+            })
+            .transpose()
         });
         self.settings = match parsed {
             Ok(s) => s.unwrap_or_default(),
@@ -144,7 +150,11 @@ impl Core {
             changed = true;
         }
 
-        effects.extend(s.accounts.iter().map(|a| Effect::CreateAccountWebview { id: a.id.clone() }));
+        effects.extend(
+            s.accounts
+                .iter()
+                .map(|a| Effect::CreateAccountWebview { id: a.id.clone() }),
+        );
         effects.push(Effect::ShowAccount {
             id: s.active_account.clone().expect("set above"),
         });
@@ -199,7 +209,10 @@ mod tests {
     fn legacy_settings_load_with_safe_defaults_and_keep_old_values() {
         let out = saved(&load(Some(LEGACY), "u1"));
         assert_eq!(out["theme"], "dark");
-        assert_eq!(out["notification_settings"]["show_message_notifications"], false);
+        assert_eq!(
+            out["notification_settings"]["show_message_notifications"],
+            false
+        );
         assert_eq!(out["notification_settings"]["sound_enabled"], false);
         // Missing fields: sound path empty, zoom 1.0 (not 0.0), spellcheck on, autostart off.
         assert_eq!(out["notification_settings"]["sound_path"], "");
@@ -209,7 +222,10 @@ mod tests {
         assert_eq!(out["clear_cache_on_exit"], false);
         assert_eq!(out["start_minimized"], false);
         assert_eq!(out["close_to_tray"], false);
-        assert_eq!((out["window_width"].as_i64(), out["window_height"].as_i64()), (Some(0), Some(0)));
+        assert_eq!(
+            (out["window_width"].as_i64(), out["window_height"].as_i64()),
+            (Some(0), Some(0))
+        );
         // Old tab fields are dropped.
         assert!(out.get("tabs").is_none() && out.get("current_tab").is_none());
     }
@@ -239,7 +255,8 @@ mod tests {
 
     #[test]
     fn saved_accounts_are_restored_without_a_new_one() {
-        let raw = r#"{"accounts":[{"id":"a","name":"A"},{"id":"b","name":"B"}],"active_account":"b"}"#;
+        let raw =
+            r#"{"accounts":[{"id":"a","name":"A"},{"id":"b","name":"B"}],"active_account":"b"}"#;
         assert_eq!(
             load(Some(raw), "unused"),
             vec![
@@ -267,7 +284,9 @@ mod tests {
     #[test]
     fn malformed_file_is_not_overwritten() {
         let effects = load(Some("{not json"), "u1");
-        assert!(!effects.iter().any(|e| matches!(e, Effect::SaveSettings { .. })));
+        assert!(!effects
+            .iter()
+            .any(|e| matches!(e, Effect::SaveSettings { .. })));
     }
 
     #[test]
@@ -278,6 +297,8 @@ mod tests {
         });
         assert!(matches!(effects[0], Effect::ReportError { .. }));
         assert!(effects.contains(&Effect::ShowAccount { id: "u1".into() }));
-        assert!(!effects.iter().any(|e| matches!(e, Effect::SaveSettings { .. })));
+        assert!(!effects
+            .iter()
+            .any(|e| matches!(e, Effect::SaveSettings { .. })));
     }
 }
