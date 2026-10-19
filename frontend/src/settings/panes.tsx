@@ -8,12 +8,18 @@ import { Segmented } from "../components/ui/segmented";
 import { Slider } from "../components/ui/slider";
 import { Switch } from "../components/ui/switch";
 import { useAvatars } from "../lib/useAvatars";
+import type { SettingChange } from "./settings-view";
 import type { PaneProps } from "./types";
 
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 3;
 const ZOOM_STEP = 0.05;
 const ZOOM_PRESETS = [0.9, 1, 1.1, 1.25];
+/** The one command that saves a setting. The backend refuses bad input and reverts the change. */
+function update(change: SettingChange) {
+  invoke("update_setting", { change });
+}
+
 const percent = (factor: number) => `${Math.round(factor * 100)}%`;
 
 const THEMES = [
@@ -31,13 +37,13 @@ export function GeneralPane({ s, change, patch, errorFor }: PaneProps) {
     change("zoom");
     setZoom(factor);
     patch({ zoom_factor: factor });
-    invoke("set_zoom", { factor });
+    update({ field: "zoom", value: factor });
   }
 
   function saveDownloadPath(path: string) {
-    change("download-path");
+    change("download_path");
     patch({ download_path: path });
-    invoke("set_download_path", { path });
+    update({ field: "download_path", value: path });
   }
 
   return (
@@ -51,7 +57,7 @@ export function GeneralPane({ s, change, patch, errorFor }: PaneProps) {
             onValueChange={(theme) => {
               change("theme");
               patch({ theme });
-              invoke("set_theme", { theme });
+              update({ field: "theme", value: theme });
             }}
           />
         </Row>
@@ -87,40 +93,40 @@ export function GeneralPane({ s, change, patch, errorFor }: PaneProps) {
           onChange={(enabled) => {
             change("autostart");
             patch({ autostart_enabled: enabled });
-            invoke("set_autostart", { enabled });
+            update({ field: "autostart", value: enabled });
           }}
         />
         <SwitchRow
           id="start-minimized"
           label="Start minimized"
           checked={s.start_minimized}
-          error={errorFor("start-minimized")}
+          error={errorFor("start_minimized")}
           onChange={(enabled) => {
-            change("start-minimized");
+            change("start_minimized");
             patch({ start_minimized: enabled });
-            invoke("set_start_minimized", { enabled });
+            update({ field: "start_minimized", value: enabled });
           }}
         />
         <SwitchRow
           id="close-to-tray"
           label="Close to tray"
           checked={s.close_to_tray}
-          error={errorFor("close-to-tray")}
+          error={errorFor("close_to_tray")}
           onChange={(enabled) => {
-            change("close-to-tray");
+            change("close_to_tray");
             patch({ close_to_tray: enabled });
-            invoke("set_close_to_tray", { enabled });
+            update({ field: "close_to_tray", value: enabled });
           }}
         />
         <SwitchRow
           id="sidebar-auto-hide"
           label="Auto-hide sidebar"
           checked={s.sidebar_auto_hide}
-          error={errorFor("sidebar-auto-hide")}
+          error={errorFor("sidebar_auto_hide")}
           onChange={(enabled) => {
-            change("sidebar-auto-hide");
+            change("sidebar_auto_hide");
             patch({ sidebar_auto_hide: enabled });
-            invoke("set_sidebar_auto_hide", { enabled });
+            update({ field: "sidebar_auto_hide", value: enabled });
           }}
         />
         {s.clear_cache_supported && (
@@ -128,11 +134,11 @@ export function GeneralPane({ s, change, patch, errorFor }: PaneProps) {
             id="clear-cache"
             label="Clear cache on exit"
             checked={s.clear_cache_on_exit}
-            error={errorFor("clear-cache")}
+            error={errorFor("clear_cache_on_exit")}
             onChange={(enabled) => {
-              change("clear-cache");
+              change("clear_cache_on_exit");
               patch({ clear_cache_on_exit: enabled });
-              invoke("set_clear_cache_on_exit", { enabled });
+              update({ field: "clear_cache_on_exit", value: enabled });
             }}
           />
         )}
@@ -146,13 +152,13 @@ export function GeneralPane({ s, change, patch, errorFor }: PaneProps) {
           onChange={(enabled) => {
             change("spellcheck");
             patch({ spellcheck_enabled: enabled });
-            invoke("set_spellcheck", { enabled });
+            update({ field: "spellcheck", value: enabled });
           }}
         />
         <Row
           label="Download folder"
           hint={s.download_path || "The system Downloads folder."}
-          error={errorFor("download-path")}
+          error={errorFor("download_path")}
         >
           <Button
             onClick={() =>
@@ -216,24 +222,16 @@ export function NotificationsPane({
   const [soundPath, setSoundPath] = useState(s.sound_path);
   useEffect(() => setSoundPath(s.sound_path), [s.sound_path]);
 
-  function save(next: { notifications?: boolean; show_sender?: boolean; sound_enabled?: boolean; path?: string }) {
-    invoke("set_notifications", {
-      messages: next.notifications ?? s.notifications,
-      showSender: next.show_sender ?? s.show_sender,
-      soundEnabled: next.sound_enabled ?? s.sound_enabled,
-      soundPath: (next.path ?? s.sound_path).trim(),
-    });
-  }
   const button = PERMISSION_BUTTONS[permission];
   const snooze = s.snooze_until ? "On until " + new Date(s.snooze_until * 1000).toLocaleString() : "Off";
   const [testResult, setTestResult] = useState("");
 
   // Used by the Choose and Default buttons. An empty path means the default sound.
   function saveSound(path: string) {
-    change("sound-path");
+    change("sound_path");
     setSoundPath(path);
     patch({ sound_path: path });
-    save({ path });
+    update({ field: "sound_path", value: path.trim() });
   }
   function startSnooze(minutes: number) {
     invoke<number | null>("snooze_notifications", { minutes }).then((end) => patch({ snooze_until: end }));
@@ -246,11 +244,11 @@ export function NotificationsPane({
           id="notifications"
           label="Message notifications"
           checked={s.notifications}
-          error={errorFor("notifications")}
+          error={errorFor("show_messages")}
           onChange={(notifications) => {
-            change("notifications");
+            change("show_messages");
             patch({ notifications });
-            save({ notifications });
+            update({ field: "show_messages", value: notifications });
           }}
         />
         <Row label="macOS notifications" hint={PERMISSION_LABELS[permission] ?? PERMISSION_LABELS.unsupported}>
@@ -271,29 +269,29 @@ export function NotificationsPane({
           id="show-sender"
           label="Show sender"
           checked={s.show_sender}
-          error={errorFor("show-sender")}
+          error={errorFor("show_sender")}
           onChange={(show_sender) => {
-            change("show-sender");
+            change("show_sender");
             patch({ show_sender });
-            save({ show_sender });
+            update({ field: "show_sender", value: show_sender });
           }}
         />
         <SwitchRow
           id="sound-enabled"
           label="Sound"
           checked={s.sound_enabled}
-          error={errorFor("sound-enabled")}
+          error={errorFor("sound_enabled")}
           onChange={(sound_enabled) => {
-            change("sound-enabled");
+            change("sound_enabled");
             patch({ sound_enabled });
-            save({ sound_enabled });
+            update({ field: "sound_enabled", value: sound_enabled });
           }}
         />
         <Row
           label="Sound file"
           htmlFor="sound-path"
           hint="Leave empty for the default sound."
-          error={errorFor("sound-path")}
+          error={errorFor("sound_path")}
         >
           <Button onClick={() => invoke<string | null>("choose_sound_file").then((path) => path && saveSound(path))}>
             Choose...
@@ -308,9 +306,9 @@ export function NotificationsPane({
             onChange={(e) => setSoundPath(e.target.value)}
             onBlur={() => {
               if (soundPath.trim() === s.sound_path) return;
-              change("sound-path");
+              change("sound_path");
               patch({ sound_path: soundPath.trim() });
-              save({ path: soundPath });
+              update({ field: "sound_path", value: soundPath.trim() });
             }}
             onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
           />

@@ -8,6 +8,7 @@
     "allow-remove-account",
     "allow-open-rename-account",
     "allow-get-settings",
+    "allow-update-setting",
     "allow-get-avatars",
     "allow-notification-permission",
     "allow-request-notification-permission",
@@ -17,17 +18,7 @@
     "allow-end-snooze",
     "allow-choose-sound-file",
     "allow-choose-download-folder",
-    "allow-set-download-path",
-    "allow-set-spellcheck",
     "allow-get-about",
-    "allow-open-repository",
-    "allow-set-theme",
-    "allow-set-zoom",
-    "allow-set-notifications",
-    "allow-set-autostart",
-    "allow-set-clear-cache-on-exit",
-    "allow-set-close-to-tray",
-    "allow-set-sidebar-auto-hide",
-    "allow-set-start-minimized"
+    "allow-open-repository"
   ]
 }

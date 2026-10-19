@@ -1253,8 +1253,8 @@ async fn choose_download_folder(app: AppHandle) -> Option<String> {
 }
 
 #[tauri::command]
-fn set_download_path(app: AppHandle, path: String) {
-    dispatch(&app, Event::DownloadPathChanged { path });
+fn update_setting(app: AppHandle, change: core::SettingChange) {
+    dispatch(&app, Event::SettingChanged(change));
 }
 
 fn download_path(app: &AppHandle) -> String {
@@ -1296,65 +1296,6 @@ fn download_destination(dir: &str, wry_default: &Path) -> Option<PathBuf> {
         n += 1;
     }
     Some(path)
-}
-
-#[tauri::command]
-fn set_spellcheck(app: AppHandle, enabled: bool) {
-    dispatch(&app, Event::SpellcheckChanged { enabled });
-}
-
-#[tauri::command]
-fn set_sidebar_auto_hide(app: AppHandle, enabled: bool) {
-    dispatch(&app, Event::SidebarAutoHideChanged { enabled });
-}
-
-#[tauri::command]
-fn set_close_to_tray(app: AppHandle, enabled: bool) {
-    dispatch(&app, Event::CloseToTrayChanged { enabled });
-}
-
-#[tauri::command]
-fn set_start_minimized(app: AppHandle, enabled: bool) {
-    dispatch(&app, Event::StartMinimizedChanged { enabled });
-}
-
-#[tauri::command]
-fn set_theme(app: AppHandle, theme: String) {
-    dispatch(&app, Event::ThemeChanged { theme });
-}
-
-#[tauri::command]
-fn set_notifications(
-    app: AppHandle,
-    messages: bool,
-    show_sender: bool,
-    sound_enabled: bool,
-    sound_path: String,
-) {
-    dispatch(
-        &app,
-        Event::NotificationSettingsChanged {
-            messages,
-            show_sender,
-            sound_enabled,
-            sound_path,
-        },
-    );
-}
-
-#[tauri::command]
-fn set_zoom(app: AppHandle, factor: f64) {
-    dispatch(&app, Event::ZoomChanged { factor });
-}
-
-#[tauri::command]
-fn set_autostart(app: AppHandle, enabled: bool) {
-    dispatch(&app, Event::AutostartChanged { enabled });
-}
-
-#[tauri::command]
-fn set_clear_cache_on_exit(app: AppHandle, enabled: bool) {
-    dispatch(&app, Event::ClearCacheOnExitChanged { enabled });
 }
 
 const TRAY_ID: &str = "main";
@@ -1642,6 +1583,7 @@ fn main() {
             open_rename_account,
             retry_account,
             get_settings,
+            update_setting,
             notification_permission,
             request_notification_permission,
             open_notification_settings,
@@ -1651,18 +1593,8 @@ fn main() {
             choose_sound_file,
             get_about,
             open_repository,
-            set_theme,
-            set_zoom,
-            set_autostart,
-            set_clear_cache_on_exit,
-            set_close_to_tray,
-            set_sidebar_auto_hide,
             set_chat_list_width,
             choose_download_folder,
-            set_download_path,
-            set_spellcheck,
-            set_start_minimized,
-            set_notifications,
             notify,
             profile_picture,
             get_avatars
