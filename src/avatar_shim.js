@@ -1,10 +1,21 @@
 (function () {
   if (window.__TAURI_INTERNALS__ === undefined) return;
-  // The user's OWN avatar: the profile picture in the header of the left pane. Chat list
-  // and chat header pictures belong to other people and must never match.
+  // The user's OWN avatar: the last picture in the left rail header (older pages: the
+  // header of #side). The rail also holds other pictures, such as the Meta AI icon, above it.
+  // Chat list and chat header pictures belong to other people and must never match.
   // WhatsApp can change its page at any time. When nothing matches, this does nothing and
   // the app shows colored initials.
-  var SELECTOR = "#side > header img, header button[aria-label='Profile'] img";
+  function findOwnAvatar() {
+    var old = document.querySelector("#side > header img");
+    if (old) return old;
+    var headers = document.querySelectorAll("header");
+    for (var i = 0; i < headers.length; i++) {
+      if (headers[i].closest("#main, #side")) continue;
+      var imgs = headers[i].querySelectorAll("img");
+      return imgs.length ? imgs[imgs.length - 1] : null;
+    }
+    return null;
+  }
   var SIZE = 96;
   var seen = "";
   function send(img) {
@@ -40,7 +51,7 @@
     probe.src = img.src;
   }
   setInterval(function () {
-    var img = document.querySelector(SELECTOR);
+    var img = findOwnAvatar();
     var src = img && img.complete && img.naturalWidth ? img.src : "";
     if (!src || src === seen) return;
     seen = src;
