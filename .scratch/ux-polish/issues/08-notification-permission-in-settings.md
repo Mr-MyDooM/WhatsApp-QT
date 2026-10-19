@@ -12,4 +12,4 @@
 - [ ] The status is correct after the user changes it in System Settings and returns to the app.
 - [ ] Under `cargo run` the app does not crash, and the settings show "Not available outside the app bundle".
 - [ ] The existing request at the first message notification still works.
-- [ ] Only the settings webview can call the new commands. The `web.whatsapp.com` origin still gets exactly one IPC command.
+- [x] Only the settings webview can call the new commands. The `web.whatsapp.com` origin still gets exactly one IPC command.
