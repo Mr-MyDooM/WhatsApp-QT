@@ -5,7 +5,6 @@ mod dock;
 mod notify;
 mod page;
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -24,8 +23,8 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use crate::avatar::Avatars;
 use crate::core::{
-    avatar_hue, initials, is_account_origin, is_page_local_url, is_whatsapp_frame_origin, Core,
-    Effect, Event, MenuAccount, NotificationBlock, PageTarget, SIDEBAR_NARROW,
+    is_account_origin, is_page_local_url, is_whatsapp_frame_origin, Core, Effect, Event,
+    MenuAccount, NotificationBlock, PageTarget, SIDEBAR_NARROW,
 };
 
 const WINDOW_WIDTH: f64 = 1200.0;
