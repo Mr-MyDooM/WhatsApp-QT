@@ -240,6 +240,18 @@ pub enum Event {
     },
     /// The shortcut: message notifications on or off.
     NotificationsToggled,
+    AutostartChanged {
+        enabled: bool,
+    },
+    /// The system refused an `AutostartChanged`. `enabled` is the state that still holds.
+    AutostartFailed {
+        enabled: bool,
+    },
+    ClearCacheOnExitChanged {
+        enabled: bool,
+    },
+    /// The user asked to quit. Runs before the app exits.
+    QuitRequested,
     /// The user closed the main window (red button).
     CloseRequested,
     /// Tray icon click or tray menu Show/Hide.
@@ -293,6 +305,14 @@ pub enum Effect {
     },
     ApplyZoom {
         factor: f64,
+    },
+    /// Idempotent. If the system refuses, the shell sends `Event::AutostartFailed`.
+    SetAutostart {
+        enabled: bool,
+    },
+    /// Remove cached files only. Logins must stay.
+    ClearAccountCaches {
+        ids: Vec<String>,
     },
     RenderSidebar {
         accounts: Vec<Account>,
@@ -403,6 +423,37 @@ impl Core {
                 n.show_message_notifications = !n.show_message_notifications;
                 self.saved_effects()
             }
+            Event::AutostartChanged { enabled } => {
+                self.settings.autostart_enabled = enabled;
+                let mut effects = Vec::new();
+                self.save(&mut effects);
+                // Last: if the system refuses, the revert save must come after this one.
+                effects.push(Effect::SetAutostart { enabled });
+                effects
+            }
+            Event::AutostartFailed { enabled } => {
+                self.settings.autostart_enabled = enabled;
+                let mut effects = Vec::new();
+                self.save(&mut effects);
+                effects
+            }
+            Event::ClearCacheOnExitChanged { enabled } => {
+                self.settings.clear_cache_on_exit = enabled;
+                let mut effects = Vec::new();
+                self.save(&mut effects);
+                effects
+            }
+            Event::QuitRequested if self.settings.clear_cache_on_exit => {
+                vec![Effect::ClearAccountCaches {
+                    ids: self
+                        .settings
+                        .accounts
+                        .iter()
+                        .map(|a| a.id.clone())
+                        .collect(),
+                }]
+            }
+            Event::QuitRequested => Vec::new(),
             Event::CloseRequested => vec![if self.settings.close_to_tray {
                 Effect::HideWindow
             } else {
@@ -467,6 +518,14 @@ impl Core {
             body,
             sound,
         }]
+    }
+
+    pub fn autostart_enabled(&self) -> bool {
+        self.settings.autostart_enabled
+    }
+
+    pub fn clear_cache_on_exit(&self) -> bool {
+        self.settings.clear_cache_on_exit
     }
 
     pub fn theme(&self) -> &str {
@@ -1788,5 +1847,68 @@ mod tests {
         let mut core = started(TWO);
         let effects = title(&mut core, "a", "(3) WhatsApp");
         assert!(!has_save(&effects));
+    }
+
+    #[test]
+    fn autostart_change_applies_and_saves() {
+        let mut core = loaded_core();
+        let effects = core.handle(Event::AutostartChanged { enabled: true });
+        assert_eq!(
+            effects.last(),
+            Some(&Effect::SetAutostart { enabled: true })
+        );
+        assert_eq!(saved(&effects)["autostart_enabled"], true);
+    }
+
+    #[test]
+    fn failed_autostart_change_is_reverted_and_saved() {
+        let mut core = loaded_core();
+        core.handle(Event::AutostartChanged { enabled: true });
+        let effects = core.handle(Event::AutostartFailed { enabled: false });
+        assert_eq!(saved(&effects)["autostart_enabled"], false);
+        assert!(!core.autostart_enabled());
+    }
+
+    #[test]
+    fn clear_cache_setting_is_saved() {
+        let mut core = loaded_core();
+        let effects = core.handle(Event::ClearCacheOnExitChanged { enabled: true });
+        assert_eq!(saved(&effects)["clear_cache_on_exit"], true);
+        assert!(core.clear_cache_on_exit());
+    }
+
+    #[test]
+    fn quit_with_clear_cache_on_clears_every_account() {
+        let mut core = started(TWO);
+        core.handle(Event::ClearCacheOnExitChanged { enabled: true });
+        assert_eq!(
+            core.handle(Event::QuitRequested),
+            vec![Effect::ClearAccountCaches {
+                ids: vec!["a".into(), "b".into()]
+            }]
+        );
+    }
+
+    #[test]
+    fn quit_with_clear_cache_off_does_nothing() {
+        let mut core = started(TWO);
+        assert!(core.handle(Event::QuitRequested).is_empty());
+    }
+
+    #[test]
+    fn autostart_and_cache_settings_are_not_saved_while_save_is_blocked() {
+        let mut core = Core::default();
+        core.handle(Event::SettingsLoaded {
+            raw: Ok(Some("{not json".into())),
+            fresh_id: "u1".into(),
+        });
+        let effects = core.handle(Event::AutostartChanged { enabled: true });
+        assert_eq!(effects, vec![Effect::SetAutostart { enabled: true }]);
+        assert!(!has_save(
+            &core.handle(Event::AutostartFailed { enabled: false })
+        ));
+        assert!(!has_save(
+            &core.handle(Event::ClearCacheOnExitChanged { enabled: true })
+        ));
     }
 }

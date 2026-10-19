@@ -8,6 +8,8 @@
     "allow-set-theme",
     "allow-set-zoom",
     "allow-set-notifications",
+    "allow-set-autostart",
+    "allow-set-clear-cache-on-exit",
     "allow-set-close-to-tray",
     "allow-set-start-minimized"
   ]
