@@ -1791,4 +1791,74 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&new).unwrap(), "new");
         std::fs::remove_dir_all(&dir).unwrap();
     }
+
+    /// Items of the bracketed list that follows `open`, trimmed and unquoted.
+    fn list_after(src: &str, open: &str) -> Vec<String> {
+        let rest = &src[src.find(open).expect("list start not found") + open.len()..];
+        rest[..rest.find(']').expect("list end not found")]
+            .split(',')
+            .map(|item| item.trim().trim_matches('"').to_string())
+            .filter(|item| !item.is_empty())
+            .collect()
+    }
+
+    #[test]
+    fn every_command_is_in_build_rs_invoke_handler_and_a_capability() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let build_rs = std::fs::read_to_string(root.join("build.rs")).unwrap();
+        // Stop before this module so the test's own text is not scanned.
+        let main_rs = include_str!("main.rs");
+        let main_rs = &main_rs[..main_rs.find("#[cfg(test)]").unwrap()];
+
+        let built = list_after(&build_rs, ".commands(&[");
+        let handled = list_after(main_rs, "generate_handler![");
+        let mut granted: Vec<(String, String)> = Vec::new(); // (permission, file)
+        for entry in std::fs::read_dir(root.join("capabilities")).unwrap() {
+            let path = entry.unwrap().path();
+            let json: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let file = path.file_name().unwrap().to_string_lossy().into_owned();
+            for perm in json["permissions"].as_array().unwrap() {
+                let perm = perm.as_str().unwrap();
+                if perm.starts_with("allow-") {
+                    granted.push((perm.to_string(), file.clone()));
+                }
+            }
+        }
+
+        let mut problems = Vec::new();
+        for name in &built {
+            if !handled.contains(name) {
+                problems.push(format!(
+                    "`{name}` is in build.rs but not in invoke_handler (src/main.rs)"
+                ));
+            }
+            let perm = format!("allow-{}", name.replace('_', "-"));
+            if !granted.iter().any(|(p, _)| *p == perm) {
+                problems.push(format!(
+                    "`{name}` is in build.rs but has no `{perm}` in capabilities/*.json"
+                ));
+            }
+        }
+        for name in &handled {
+            if !built.contains(name) {
+                problems.push(format!(
+                    "`{name}` is in invoke_handler (src/main.rs) but not in build.rs"
+                ));
+            }
+        }
+        for (perm, file) in &granted {
+            let name = perm.trim_start_matches("allow-").replace('-', "_");
+            if !built.contains(&name) {
+                problems.push(format!(
+                    "`{perm}` in capabilities/{file} has no command `{name}` in build.rs"
+                ));
+            }
+        }
+        assert!(
+            problems.is_empty(),
+            "command registries differ:\n{}",
+            problems.join("\n")
+        );
+    }
 }
