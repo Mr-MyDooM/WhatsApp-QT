@@ -3,6 +3,6 @@
   "version": "0.1.0",
   "identifier": "dev.mj.whatsapp-qt",
   "build": { "frontendDist": "./ui" },
-  "app": { "windows": [], "security": { "csp": null } },
+  "app": { "windows": [], "withGlobalTauri": true, "security": { "csp": null } },
   "bundle": { "active": false, "icon": ["icons/icon.png"] }
 }
