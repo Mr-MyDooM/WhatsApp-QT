@@ -550,14 +550,14 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                     }
                 }
             }
-            Effect::DeleteAccountData { id } => {
+            Effect::RemoveAvatar { id } => {
                 app.state::<Mutex<Avatars>>()
                     .lock()
                     .expect("avatars lock")
                     .remove(&id);
                 emit_avatars(app);
-                delete_account_data(app, &id)
             }
+            Effect::DeleteAccountData { id } => delete_account_data(app, &id),
             Effect::ShowAccount { id } => show_account(app, &id),
             Effect::SetWindowScheme { theme } => {
                 let scheme = match theme.as_str() {
