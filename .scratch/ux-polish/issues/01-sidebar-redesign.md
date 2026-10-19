@@ -6,14 +6,14 @@
 
 **Status:** ready-for-agent
 
-- [ ] Each account shows an avatar with initials from its account name. One-word names give one letter, longer names give two.
-- [ ] The avatar colour comes from the account UUID. It does not change after a restart or a rename.
-- [ ] The active account has a marker on its leading edge.
-- [ ] The unread count shows as a pill on the avatar, with "99+" above 99. There is no pill at 0.
-- [ ] The sidebar colours follow the Light, Dark and System themes.
-- [ ] Each account is a `button`. Its accessible name has the account name and the unread count (for example "Work, 3 unread"). The active account has `aria-current`.
-- [ ] The focus ring is visible. The up and down arrow keys move through the accounts.
-- [ ] The tooltip shows the name and the shortcut (for example "Work, Cmd+1").
-- [ ] The add-account button has an accessible name and sits right after the last account.
-- [ ] Hover and switch animations respect `prefers-reduced-motion`.
-- [ ] Text contrast meets 4.5:1 in both themes.
+- [x] Each account shows an avatar with initials from its account name. One-word names give one letter, longer names give two.
+- [x] The avatar colour comes from the account UUID. It does not change after a restart or a rename.
+- [x] The active account has a marker on its leading edge.
+- [x] The unread count shows as a pill on the avatar, with "99+" above 99. There is no pill at 0.
+- [x] The sidebar colours follow the Light, Dark and System themes.
+- [x] Each account is a `button`. Its accessible name has the account name and the unread count (for example "Work, 3 unread"). The active account has `aria-current`.
+- [x] The focus ring is visible. The up and down arrow keys move through the accounts.
+- [x] The tooltip shows the name and the shortcut (for example "Work, Cmd+1").
+- [x] The add-account button has an accessible name and sits right after the last account.
+- [x] Hover and switch animations respect `prefers-reduced-motion`.
+- [x] Text contrast meets 4.5:1 in both themes.

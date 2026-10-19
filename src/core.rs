@@ -848,6 +848,24 @@ pub fn is_account_origin(url: &url::Url) -> bool {
     url.scheme() == "https" && url.host_str() == Some("web.whatsapp.com") && url.port().is_none()
 }
 
+/// Avatar letters: one word gives one letter, more words give the first letters of the first two.
+pub fn initials(name: &str) -> String {
+    name.split_whitespace()
+        .take(2)
+        .filter_map(|w| w.chars().next())
+        .flat_map(char::to_uppercase)
+        .collect()
+}
+
+/// Avatar colour hue (0-359), the same for the same account id on every run.
+/// FNV-1a, because the std hasher gives no stable result across Rust versions.
+pub fn avatar_hue(id: &str) -> u32 {
+    let hash = id.bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    });
+    hash % 360
+}
+
 /// WhatsApp Web puts the unread count first in the page title: "(3) WhatsApp".
 /// Any other title, or a number that does not fit, counts as zero.
 fn unread_count(title: &str) -> u32 {
@@ -889,6 +907,25 @@ fn chat_url(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn initials_one_letter_for_one_word_two_for_more() {
+        assert_eq!(initials("work"), "W");
+        assert_eq!(initials("My Work Phone"), "MW");
+        assert_eq!(initials("  "), "");
+    }
+
+    #[test]
+    fn avatar_hue_is_stable_and_in_range() {
+        let id = "3f2b8c1e-0000-4000-8000-000000000001";
+        assert_eq!(avatar_hue(id), avatar_hue(id));
+        assert_eq!(avatar_hue("a"), 0xe40c_292c_u32 % 360);
+        assert!(avatar_hue(id) < 360);
+        assert_ne!(
+            avatar_hue(id),
+            avatar_hue("3f2b8c1e-0000-4000-8000-000000000002")
+        );
+    }
 
     fn load(raw: Option<&str>, fresh: &str) -> Vec<Effect> {
         Core::default().handle(Event::SettingsLoaded {
