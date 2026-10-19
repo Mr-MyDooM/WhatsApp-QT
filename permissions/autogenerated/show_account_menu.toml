@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-show-account-menu"
+description = "Enables the show_account_menu command without any pre-configured scope."
+commands.allow = ["show_account_menu"]
+
+[[permission]]
+identifier = "deny-show-account-menu"
+description = "Denies the show_account_menu command without any pre-configured scope."
+commands.deny = ["show_account_menu"]

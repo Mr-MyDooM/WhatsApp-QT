@@ -1,0 +1,17 @@
+{
+  "identifier": "default",
+  "webviews": ["sidebar"],
+  "permissions": [
+    "core:event:default",
+    "core:window:allow-start-dragging",
+    "allow-sidebar-ready",
+    "allow-toggle-sidebar",
+    "allow-reveal-sidebar",
+    "allow-open-settings-window",
+    "allow-add-account",
+    "allow-switch-account",
+    "allow-remove-account",
+    "allow-show-account-menu",
+    "allow-get-avatars"
+  ]
+}

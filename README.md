@@ -1,132 +1,84 @@
+# Pairline
 
-# WhatsApp-QT
+Several WhatsApp numbers side by side in one light Mac app.
 
-🧙 A macOS first simple, privacy-friendly WhatsApp-like desktop client built in Rust + QML (Qt), inspired by [ZapZap](https://github.com/rafatosta/zapzap).  
-Designed to be cross-platform (macOS, Linux & Windows) and lightweight — perfect for system tray usage, theming, and tabbed chat-like browsing.
+Pairline is an unofficial desktop client for WhatsApp Web. Each account has its own login and data. A sidebar switches between accounts. The app has a tray icon, message notifications, a Dock badge with the unread count, and per-account Mute and global Snooze.
 
----
+Not affiliated with or endorsed by WhatsApp or Meta. "WhatsApp" is a trademark of its owner.
 
-## 📦 Features
+## Platform status
 
-- 🖼️ Beautiful QML frontend powered by Qt6
-- 🦀 Rust backend using [`cxx-qt`](https://crates.io/crates/cxx-qt)
-- 🧭 Multi-tab support (like browser tabs)
-- 🎨 Light/Dark/system themes
-- 🔔 System tray support (Qt-native, no GTK tray needed)
-- 💾 Persistent settings (saved to `~/.config/WhatsApp-QT`)
-- 🔧 Designed for macOS first, then Linux; Windows is best-effort
+- macOS 14 or later: supported.
+- Linux and Windows: paused. The code is kept but not tested.
 
----
+## Install (macOS)
 
-## 🚀 Getting Started
+Pairline is not notarized. macOS blocks it on first launch.
 
-### 🧰 Prerequisites
+1. Build the app (see "Build from source") and open the `.app` or `.dmg` from `target/release/bundle/`.
+2. Open Pairline once. macOS shows a warning. Close it.
+3. On macOS 15 and later, open System Settings, then Privacy and Security. Scroll down and click Open Anyway.
+4. Open Pairline again and confirm.
 
-> You should have Rust (stable) and Qt6 dev libraries (including QtWebEngine) installed.
+If you move from WhatsApp-QT, scan the QR code again one time. The settings file keeps its path and format.
 
-```bash
-# Rust toolchain
-curl https://sh.rustup.rs -sSf | sh
+## Privacy
 
-# Qt6 dev (for openSUSE Tumbleweed)
-sudo zypper install qt6-base-devel qt6-declarative-devel qt6-webengine-devel
-```
+- The app has no telemetry, no analytics and no update check.
+- The app code makes no network call of its own. Each account loads `https://web.whatsapp.com` in a webview, and that is the only site the app opens in the app.
+- Logins and chats stay on your Mac, in one separate data store per account.
 
-QtWebEngine is a **build-time** dependency: `build.rs` links the `WebEngineQuick`
-module so `QtWebEngineQuick::initialize()` can run before the app is constructed.
+## Settings
 
----
+Settings are in `<config dir>/WhatsAppDesktop/settings.json`. On macOS this is `~/Library/Application Support/WhatsAppDesktop/settings.json`.
 
-### 📥 Clone & Build
+## Build from source
+
+You need Rust (stable), Node, pnpm, and the Tauri CLI:
 
 ```bash
-git clone https://github.com/yourusername/whatsapp-qt.git
-cd whatsapp-qt
-
-# Build & run
-cargo run
+cargo install tauri-cli --version "^2" --locked
 ```
 
----
+Run in dev mode with hot reload for the interface:
 
-## 🛠️ Project Structure
-
-```
-.
-├── src/                  # Rust backend (logic, integration, settings, tray)
-│   └── main.rs
-├── qml/                  # QML UI files
-│   ├── main.qml
-│   └── components/
-├── resources/            # Icons, tray images, etc.
-├── Cargo.toml
-└── README.md
+```bash
+cargo tauri dev
 ```
 
----
+Build the `.app` and `.dmg`:
 
-## 🔧 Settings Location
+```bash
+cargo tauri build
+# or
+packaging/macos/build-macos-app.sh
+```
 
-- Config file saved at: `~/.config/WhatsApp-QT/settings.json`
-- Tabs, theme, and other preferences auto-save on exit
+Run without the Tauri CLI. Build the interface first:
 
----
+```bash
+pnpm --dir frontend install --frozen-lockfile
+pnpm --dir frontend build
+cargo run --features custom-protocol
+```
 
-## 🐛 Troubleshooting
+For backend logs, set `RUST_LOG=debug`. Without it, only errors print.
 
-| Issue | Fix |
-|------|-----|
-| `settings` borrow/move panic | Avoid using `.clone()` inside `tokio::spawn`, or switch to sync I/O |
-| Tray icon not showing | Ensure a tray/StatusNotifier host is running and `qml6-module-qt-labs-platform` is installed |
-| GUI not launching | Ensure Qt6 dev packages are installed (`qt6-*`) |
-| New `.qml` file not found at runtime | Add it to `qml_files` in `build.rs` — QML is compiled into the binary |
+## Project layout
 
----
+- `src/`: Rust backend (Tauri 2). Accounts, tray, notifications, settings.
+- `frontend/`: React and TypeScript interface (sidebar, settings, rename window, error page), built with Vite.
+- `docs/adr/`: design decisions.
+- `GLOSSARY.md`: project terms.
 
-## 💡 Roadmap
+## Note from the dev
 
-- [x] Theme toggling
-- [x] Tray integration
-- [x] Save user settings
-- [X] Save + restore tabs
-- [X] Multi-account support
-- [ ] Windows support
-- [ ] Flatpak build
+I am an SRE first, coding my way into software development. Expect stability on macOS only.
 
----
+## Contributing
 
-## 🖥️ Platform Support
+Open an issue or a pull request.
 
-### 🍏 macOS: First-Class Citizen
-This app is developed and tested primarily on macOS.  
-Install Qt with `brew install qt`, then `export QMAKE="$(brew --prefix qt)/bin/qmake"` before `cargo run`.  
-Build an unsigned `.app` with `packaging/macos/build-macos-app.sh`.
+## Author
 
-### 🐧 Linux: Supported
-Second priority. Earlier versions were tested on openSUSE Slowroll/Tumbleweed + KDE.  
-Install your distro's Qt6 dev packages and set `QMAKE` to the Qt6 `qmake`.
-
-### 🪟 Windows: Works (Mostly)
-Basic features run fine, though some quirks may exist.  
-Support is "best effort": patches welcome, rants optional.
-
----
-
-> ⚠️ **Note from the dev:**  
-> I'm a SRE first, coding my way into developerhood.  
-> Expect stability on macOS, and some occasional chaos elsewhere.
- 
-
----
-## 🤝 Contributing
-
-Want to help make this better? Open an issue or submit a PR!
-All help welcome — especially if you're new to Rust or QML.
-
----
-
-## 🧙 Author
-
-Made with ❤️ by M.J (`~~::Mr.MyDooM::~~`)  
-
-Inspired by SRE-style tools, built for fun and learning.
+Made by M.J (`~~::Mr.MyDooM::~~`).

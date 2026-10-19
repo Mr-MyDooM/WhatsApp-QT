@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-repository"
+description = "Enables the open_repository command without any pre-configured scope."
+commands.allow = ["open_repository"]
+
+[[permission]]
+identifier = "deny-open-repository"
+description = "Denies the open_repository command without any pre-configured scope."
+commands.deny = ["open_repository"]

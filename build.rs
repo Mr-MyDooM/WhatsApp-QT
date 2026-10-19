@@ -1,30 +1,43 @@
-use cxx_qt_build::{CxxQtBuilder, QmlModule};
-
 fn main() {
-    // NOTE: every .qml file the app loads must be listed in `qml_files` below.
-    // They are compiled into the binary via the Qt resource system, so a new .qml
-    // file that is not listed here simply does not exist at runtime.
-    CxxQtBuilder::new()
-        // QtWebEngineQuick, for the WebEngineView used by qml/components/WebTab.qml
-        // and for whatsappqt_webengine_init().
-        .qt_module("WebEngineQuick")
-        .qml_module(QmlModule {
-            // Single-segment uri, so the existing bare `import AppController`
-            // (no version) in the QML keeps working unchanged.
-            uri: "AppController",
-            rust_files: &["src/cxxqt_object.rs"],
-            qml_files: &[
-                "qml/main.qml",
-                "qml/components/Sidebar.qml",
-                "qml/components/WebTab.qml",
-                "qml/components/SettingsDialog.qml",
-                "qml/styles/AppStyle.qml",
-            ],
-            ..Default::default()
-        })
-        .cc_builder(|cc| {
-            cc.include("include");
-            cc.file("src/webengine_init.cpp");
-        })
-        .build();
+    // With an app manifest, each command needs a permission. Capability files grant
+    // them to local webviews only, so remote pages cannot call them.
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
+        tauri_build::AppManifest::new().commands(&[
+            "sidebar_ready",
+            "toggle_sidebar",
+            "reveal_sidebar",
+            "open_settings_window",
+            "add_account",
+            "switch_account",
+            "remove_account",
+            "show_account_menu",
+            "rename_account",
+            "cancel_rename",
+            "open_rename_account",
+            "retry_account",
+            "get_settings",
+            "notification_permission",
+            "request_notification_permission",
+            "open_notification_settings",
+            "send_test_notification",
+            "snooze_notifications",
+            "end_snooze",
+            "choose_sound_file",
+            "get_about",
+            "open_repository",
+            "set_theme",
+            "set_zoom",
+            "set_notifications",
+            "notify",
+            "profile_picture",
+            "set_chat_list_width",
+            "get_avatars",
+            "set_autostart",
+            "set_clear_cache_on_exit",
+            "set_close_to_tray",
+            "set_sidebar_auto_hide",
+            "set_start_minimized",
+        ]),
+    ))
+    .expect("failed to run tauri-build");
 }

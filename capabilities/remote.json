@@ -1,0 +1,6 @@
+{
+  "identifier": "remote-notify",
+  "remote": { "urls": ["https://web.whatsapp.com/*"] },
+  "webviews": ["account-*"],
+  "permissions": ["allow-notify", "allow-profile-picture", "allow-set-chat-list-width"]
+}

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Tauri merges this file into the bundle Info.plist. WhatsApp Web needs the
+     microphone for voice messages and calls, and the camera for video calls. -->
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Pairline needs microphone access for voice messages and calls.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Pairline needs camera access for video calls.</string>
+</dict>
+</plist>

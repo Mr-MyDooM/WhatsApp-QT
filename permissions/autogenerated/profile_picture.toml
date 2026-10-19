@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-profile-picture"
+description = "Enables the profile_picture command without any pre-configured scope."
+commands.allow = ["profile_picture"]
+
+[[permission]]
+identifier = "deny-profile-picture"
+description = "Denies the profile_picture command without any pre-configured scope."
+commands.deny = ["profile_picture"]

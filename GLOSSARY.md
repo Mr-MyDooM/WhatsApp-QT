@@ -39,8 +39,14 @@ One entry per term: definition, boundaries, one resolved ambiguity. Agents write
 ## Snooze
 - Definition: a time-bounded silence of message notifications for all accounts at once.
 - Boundary: Snooze ends by itself when its time runs out; turning notifications off does not. Snooze survives a restart. Snooze silences alerts only; it never hides the unread count.
-- Avoid: "DND", "do not disturb", "mute" (reserved for a possible future per-account silence).
+- Avoid: "DND", "do not disturb", "mute" (a different thing: see Mute).
 - Resolved ambiguity: Snooze is global, never per account.
+
+## Mute
+- Definition: a silence of message notifications for one account, until the user unmutes it.
+- Boundary: Mute is per account and has no end time; it survives a restart. Mute silences alerts only; it never hides or changes the unread count. Snooze is separate: ending Snooze does not unmute, and unmuting does not end Snooze.
+- Avoid: "DND", "do not disturb", "snooze" (global and time-bounded).
+- Resolved ambiguity: a muted account still shows its unread count in the sidebar, the tray and the Dock badge.
 
 ## Deep link
 - Definition: an external `whatsapp://` or `wa.me` link that asks the app to open a chat.

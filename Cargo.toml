@@ -3,12 +3,12 @@ name = "WhatsApp-QT"
 version = "0.1.0"
 edition = "2021"
 authors = ["MJ <mj@LocalHost.Com>"]
-description = "WhatsApp and telegram messaging in rust using QT"
+description = "WhatsApp and telegram messaging in rust using Tauri"
 license = "MIT"
-repository = "https://github.com/mr.mydoom/whatsapp-qt"
+repository = "https://github.com/Mr-MyDooM/WhatsApp-QT"
 homepage = "https://mr.mydoom.github.com"
 documentation = "https://github.com/mr.mydoom/whatsapp-qt"
-keywords = ["rust", "qt", "whatsapp"]
+keywords = ["rust", "tauri", "whatsapp"]
 categories = ["gui-utilities", "messaging-tools"]
 readme = "README.md"
 
@@ -16,50 +16,40 @@ readme = "README.md"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 dirs = "4.0"
-# Qt6 bindings. cxx-qt replaced qmetaobject (which is Qt5-only) so that the Qt6-only
-# QML APIs the frontend already uses (`import QtCore`, versionless QtQuick.Dialogs)
-# actually resolve.
-#
-# `cxx` is pinned because cxx-qt 0.7.3 was tested against cxx ~1.0.144; a newer cxx
-# compiles fine on its own but its "cxxbridge1$N$..." ABI version tag (baked into
-# every generated symbol name) must match the tag `cxx-gen` bakes into the C++ side
-# it generates in build.rs. Bumping one without the other links with undefined
-# symbols like `_cxxbridge1$199$AppController$theme` (verified on this machine: the
-# official cxx-qt "cargo_without_cmake" example reproduces the identical failure
-# with an unpinned cxx-gen, and pinning both to the same patch fixes it).
-cxx = "=1.0.144"
-cxx-qt = "0.7"
-cxx-qt-lib = { version = "0.7", features = ["qt_full", "link_qt_object_files"] }
-rand = "0.9.2"
-tokio = { version = "1.46.1", features = ["full"] }
-chrono = "0.4.41"
-futures = "0.3.31"
-blocking = "1.6.2"
+# Exact pin: the `unstable` child-webview API can change in a minor release.
+tauri = { version = "=2.12.4", features = ["unstable", "tray-icon", "macos-private-api"] }
+tauri-plugin-window-state = "2"
+uuid = { version = "1", features = ["v4"] }
+# Decodes the profile picture data URL. Already in Cargo.lock (0.22.1) through Tauri: no new crate.
+base64 = "0.22"
 notify-rust = "4.0"
 log = "0.4"
 env_logger = "0.11"
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+url = "2"
+tauri-plugin-autostart = "2.6.0"
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
 
-# Windows-only: winrt-notification depends on the `windows` crate, which does not
-# build on macOS/Linux. Keep it out of non-Windows builds.
-[target.'cfg(windows)'.dependencies]
-winrt-notification = "0.5"
+[features]
+# Serve the built frontend/dist instead of build.devUrl. `cargo tauri build` turns it on.
+custom-protocol = ["tauri/custom-protocol"]
+
+# macOS-only: the cache clear on quit calls WKWebsiteDataStore directly, because
+# Tauri only offers clear_all_browsing_data, which also removes logins. Versions match
+# the ones wry already pulls in, so Cargo.lock gains no new crate.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-user-notifications = "0.3.2"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSBundle", "NSDate", "NSDictionary", "NSError", "NSObject", "NSSet", "NSString", "NSValue"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSMenu", "NSMenuItem", "NSResponder"] }
+objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKWebsiteDataRecord"] }
 
 
 [build-dependencies]
-# Generates the C++ side of the cxx-qt bridge, compiles the QML module into the
-# binary's Qt resources, and links the Qt libraries.
-cxx-qt-build = { version = "0.7", features = ["link_qt_object_files"] }
-# Pinned to match `cxx = "=1.0.144"` above (see the comment there) — cxx-qt-build
-# uses this to generate the C++ side of the bridge, and its patch version must track
-# cxx's or the generated symbol ABI tags mismatch at link time. Declared explicitly
-# (rather than left to Cargo.lock) so a routine `cargo update` can't silently drift
-# it out of sync again.
-cxx-gen = "=0.7.144"
-
-[features]
-default = []
-embedded-resources = []
-
+tauri-build = { version = "=2.7.3", features = [] }
 
 [profile.release]
 opt-level = "z"
