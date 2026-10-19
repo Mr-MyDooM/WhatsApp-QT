@@ -454,7 +454,10 @@ pub enum Effect {
         sidebar: f64,
     },
     /// Tell the sidebar page which width mode it is in.
-    EmitSidebarState,
+    EmitSidebarState {
+        wide: bool,
+        auto_hide: bool,
+    },
     RenderSidebar {
         view: SidebarView,
     },
@@ -581,8 +584,14 @@ impl Core {
                 self.switch(&id)
             }
             // `ShowUnread` also renders the sidebar. Use it only when there are counts.
-            Event::SidebarReady if self.unread.is_empty() => vec![self.render()],
-            Event::SidebarReady => vec![self.show_unread()],
+            Event::SidebarReady => {
+                let view = if self.unread.is_empty() {
+                    self.render()
+                } else {
+                    self.show_unread()
+                };
+                vec![view, self.sidebar_state_effect()]
+            }
             Event::SettingChanged(change) => self.apply_change(change),
             Event::ThemeChanged { theme } => self.set_theme(theme),
             Event::ZoomChanged { factor } => self.set_zoom(factor),
@@ -687,14 +696,14 @@ impl Core {
                     (true, false) => (false, true),
                 };
                 self.sidebar_revealed = false;
-                let mut effects = vec![self.layout_effect(), Effect::EmitSidebarState];
+                let mut effects = vec![self.layout_effect(), self.sidebar_state_effect()];
                 self.save(&mut effects);
                 effects
             }
             Event::SidebarAutoHideChanged { enabled } => {
                 self.settings.sidebar_auto_hide = enabled;
                 self.sidebar_revealed = false;
-                let mut effects = vec![self.layout_effect(), Effect::EmitSidebarState];
+                let mut effects = vec![self.layout_effect(), self.sidebar_state_effect()];
                 self.save(&mut effects);
                 effects
             }
@@ -898,17 +907,11 @@ impl Core {
         }
     }
 
-    pub fn sidebar_wide(&self) -> bool {
-        self.settings.sidebar_wide
-    }
-
-    pub fn sidebar_auto_hide(&self) -> bool {
-        self.settings.sidebar_auto_hide
-    }
-
-    #[cfg(test)]
-    pub fn chat_list_width(&self) -> Option<f64> {
-        self.settings.chat_list_width
+    fn sidebar_state_effect(&self) -> Effect {
+        Effect::EmitSidebarState {
+            wide: self.settings.sidebar_wide,
+            auto_hide: self.settings.sidebar_auto_hide,
+        }
     }
 
     /// Empty means the system Downloads folder.
@@ -1331,7 +1334,7 @@ impl Core {
         // Startup order: appearance, sidebar, login item, start window.
         effects.extend(self.appearance_effects());
         effects.push(self.layout_effect());
-        effects.push(Effect::EmitSidebarState);
+        effects.push(self.sidebar_state_effect());
         if self.settings.autostart_enabled && !debug_build {
             effects.push(Effect::ReregisterAutostart);
         }
@@ -1577,16 +1580,16 @@ mod tests {
             fresh_id: "u1".into(),
             debug_build: false,
         });
-        assert!(!core.sidebar_wide() && !core.sidebar_auto_hide());
+        assert!(!core.settings.sidebar_wide && !core.settings.sidebar_auto_hide);
         let effects = core.handle(Event::SidebarToggled);
-        assert!(core.sidebar_wide() && !core.sidebar_auto_hide());
-        assert_eq!(effects[1], Effect::EmitSidebarState);
+        assert!(core.settings.sidebar_wide && !core.settings.sidebar_auto_hide);
+        assert_eq!(effects[1], core.sidebar_state_effect());
         assert_eq!(saved(&effects)["sidebar_wide"], true);
         let effects = core.handle(Event::SidebarToggled);
-        assert!(!core.sidebar_wide() && core.sidebar_auto_hide());
+        assert!(!core.settings.sidebar_wide && core.settings.sidebar_auto_hide);
         assert_eq!(saved(&effects)["sidebar_auto_hide"], true);
         let effects = core.handle(Event::SidebarToggled);
-        assert!(!core.sidebar_wide() && !core.sidebar_auto_hide());
+        assert!(!core.settings.sidebar_wide && !core.settings.sidebar_auto_hide);
         assert_eq!(saved(&effects)["sidebar_auto_hide"], false);
     }
 
@@ -1599,12 +1602,12 @@ mod tests {
             debug_build: false,
         });
         let effects = core.handle(Event::SidebarAutoHideChanged { enabled: true });
-        assert!(core.sidebar_wide() && core.sidebar_auto_hide());
-        assert_eq!(effects[1], Effect::EmitSidebarState);
+        assert!(core.settings.sidebar_wide && core.settings.sidebar_auto_hide);
+        assert_eq!(effects[1], core.sidebar_state_effect());
         assert_eq!(saved(&effects)["sidebar_auto_hide"], true);
         // The button pins an auto-hidden sidebar as the avatar column.
         core.handle(Event::SidebarToggled);
-        assert!(!core.sidebar_wide() && !core.sidebar_auto_hide());
+        assert!(!core.settings.sidebar_wide && !core.settings.sidebar_auto_hide);
     }
 
     #[test]
@@ -1613,23 +1616,32 @@ mod tests {
         let effects = core.handle(Event::ChatListResized {
             width: Some(10_000.0),
         });
-        assert_eq!(core.chat_list_width(), Some(CHAT_LIST_MAX_WIDTH));
+        assert_eq!(
+            core.page_config().chat_list_width,
+            Some(CHAT_LIST_MAX_WIDTH)
+        );
         let config = page_config_of(&effects);
         assert_eq!(config.chat_list_width, Some(CHAT_LIST_MAX_WIDTH));
         assert_eq!(config.chat_list_min, CHAT_LIST_MIN_WIDTH);
         assert_eq!(config.chat_list_max, CHAT_LIST_MAX_WIDTH);
         assert_eq!(saved(&effects)["chat_list_width"], CHAT_LIST_MAX_WIDTH);
         core.handle(Event::ChatListResized { width: Some(1.0) });
-        assert_eq!(core.chat_list_width(), Some(CHAT_LIST_MIN_WIDTH));
+        assert_eq!(
+            core.page_config().chat_list_width,
+            Some(CHAT_LIST_MIN_WIDTH)
+        );
         // A bad value from the page changes nothing and saves nothing.
         assert!(core
             .handle(Event::ChatListResized {
                 width: Some(f64::NAN)
             })
             .is_empty());
-        assert_eq!(core.chat_list_width(), Some(CHAT_LIST_MIN_WIDTH));
+        assert_eq!(
+            core.page_config().chat_list_width,
+            Some(CHAT_LIST_MIN_WIDTH)
+        );
         let effects = core.handle(Event::ChatListResized { width: None });
-        assert_eq!(core.chat_list_width(), None);
+        assert_eq!(core.page_config().chat_list_width, None);
         assert!(saved(&effects)["chat_list_width"].is_null());
     }
 
@@ -1650,7 +1662,7 @@ mod tests {
             fresh_id: "u1".into(),
             debug_build: false,
         });
-        assert!(core.sidebar_wide());
+        assert!(core.settings.sidebar_wide);
     }
 
     #[test]
@@ -2015,7 +2027,10 @@ mod tests {
         let effects = core.handle(Event::SidebarReady);
         assert_eq!(
             effects,
-            vec![render(&[("a", "Account 1"), ("b", "Account 2")], "a")]
+            vec![
+                render(&[("a", "Account 1"), ("b", "Account 2")], "a"),
+                core.sidebar_state_effect()
+            ]
         );
     }
 
@@ -2554,7 +2569,10 @@ mod tests {
         assert_eq!(
             tail[3..],
             [
-                &Effect::EmitSidebarState,
+                &Effect::EmitSidebarState {
+                    wide: false,
+                    auto_hide: false
+                },
                 &Effect::ReregisterAutostart,
                 &Effect::ShowWindow
             ]
@@ -2578,7 +2596,10 @@ mod tests {
         assert_eq!(start_with("{}", false).last(), Some(&Effect::ShowWindow));
         let effects = start_with(r#"{"start_minimized":true}"#, false);
         assert!(!effects.contains(&Effect::ShowWindow));
-        assert_eq!(effects.last(), Some(&Effect::EmitSidebarState));
+        assert!(matches!(
+            effects.last(),
+            Some(Effect::EmitSidebarState { .. })
+        ));
     }
 
     #[test]
@@ -2839,7 +2860,7 @@ mod tests {
         let mut core = started(TWO);
         title(&mut core, "b", "(2) WhatsApp");
         let effects = core.handle(Event::SidebarReady);
-        assert_eq!(effects, vec![unread(&core, 2)]);
+        assert_eq!(effects[0], unread(&core, 2));
     }
 
     #[test]

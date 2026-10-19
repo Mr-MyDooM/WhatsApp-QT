@@ -462,12 +462,7 @@ fn layout(
 }
 
 /// Tells the sidebar page which state it is in.
-fn emit_sidebar_state(app: &AppHandle) {
-    let (wide, auto_hide) = {
-        let core = app.state::<Mutex<Core>>();
-        let core = core.lock().expect("core lock");
-        (core.sidebar_wide(), core.sidebar_auto_hide())
-    };
+fn emit_sidebar_state(app: &AppHandle, wide: bool, auto_hide: bool) {
     let result = app
         .emit_to(SIDEBAR_LABEL, "sidebar-wide", wide)
         .and_then(|()| app.emit_to(SIDEBAR_LABEL, "sidebar-auto-hide", auto_hide));
@@ -671,7 +666,9 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                 page_start,
                 sidebar,
             } => apply_layout(app, page_start, sidebar),
-            Effect::EmitSidebarState => emit_sidebar_state(app),
+            Effect::EmitSidebarState { wide, auto_hide } => {
+                emit_sidebar_state(app, wide, auto_hide)
+            }
             Effect::ShowUnread { view, total } => show_unread(app, &view, total),
         }
     }
@@ -695,7 +692,6 @@ fn new_id() -> String {
 #[tauri::command]
 fn sidebar_ready(app: AppHandle) {
     dispatch(&app, Event::SidebarReady);
-    emit_sidebar_state(&app);
 }
 
 #[tauri::command]
