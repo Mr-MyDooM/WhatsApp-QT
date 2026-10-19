@@ -6,6 +6,7 @@
     "allow-sidebar-ready",
     "allow-add-account",
     "allow-switch-account",
-    "allow-remove-account"
+    "allow-remove-account",
+    "allow-show-account-menu"
   ]
 }
