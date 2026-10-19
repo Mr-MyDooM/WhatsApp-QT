@@ -4,7 +4,7 @@
 
 **Blocked by:** 04 (it adds ts-rs and the drift test).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## Decisions
 
@@ -21,3 +21,7 @@
 - [ ] Core tests cover each `SettingChange` variant.
 - [ ] The drift test and `pnpm --dir frontend build` pass.
 - [ ] Manual check in the bundled app: each control in Settings saves, survives a restart, and a failed save shows its error under the right control.
+
+## Answer
+
+Done on `refactor/architecture`. Commits c9f1c3c and 26e2c51. Review fixes d63a840 (each `SettingChange` handled directly, per-setting Events deleted) and 831d0e4 (save failure shown under the field, `Field` alias removed). The four checks exit 0 at 831d0e4 (145 tests). Not done: the manual check in the bundled `.app`.

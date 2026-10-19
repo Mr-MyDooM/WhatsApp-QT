@@ -1,6 +1,6 @@
 # Spec: deepen the shell modules
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 Source: architecture review of 2026-10-19 (main @ 7c46e60) and the grilling session after it. Tickets: `issues/01` to `issues/08`.
 

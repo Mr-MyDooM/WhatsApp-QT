@@ -4,7 +4,7 @@
 
 **Blocked by:** 05 (it deletes 11 commands; write the check after).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## Decisions
 
@@ -15,3 +15,7 @@
 
 - [ ] The test passes on the current tree.
 - [ ] Taking one name out of any of the three makes the test fail with a message that names the command and the file.
+
+## Answer
+
+Done on `refactor/architecture`. Commit cb088a1. Review fix 3735e09: `remote.json` must grant exactly `allow-notify`, `allow-profile-picture` and `allow-set-chat-list-width`. The four checks exit 0 at 831d0e4 (145 tests). Not done: the manual check in the bundled `.app`.

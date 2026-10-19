@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## Decisions
 
@@ -27,3 +27,7 @@
 - [ ] `page.rs` tests: the init script and the live update JS hold the config as JSON, and the theme CSS covers each theme (move `theme_css_covers_each_theme`).
 - [ ] No settings JS is built with `format!` in `main.rs`. `inject_css`, the two `eval` loops and the init globals in `add_account_webview` are gone.
 - [ ] Manual check in the bundled app: change theme, zoom, spellcheck and drag the chat list; open a second account and reload a page; each setting holds.
+
+## Answer
+
+Done on `refactor/architecture`. Commit 16fb1a0. Review fix 09ef0c0: the theme and spellcheck shims skip work when the value is unchanged. The four checks exit 0 at 831d0e4 (145 tests). Not done: the manual check in the bundled `.app`.

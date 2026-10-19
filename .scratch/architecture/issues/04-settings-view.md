@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## Decisions
 
@@ -18,3 +18,7 @@
 - [ ] Core tests cover the `SettingsView` shape, derived fields included.
 - [ ] The ts-rs drift test passes, and `pnpm --dir frontend build` passes with the generated type.
 - [ ] Manual check in the bundled app: the settings window shows each current value, the Snooze end and the account list as before.
+
+## Answer
+
+Done on `refactor/architecture`. Commit 306435e. The four checks exit 0 at 831d0e4 (145 tests). Not done: the manual check in the bundled `.app`.

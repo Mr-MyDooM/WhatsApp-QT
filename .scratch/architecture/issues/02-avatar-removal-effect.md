@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## Decisions
 
@@ -16,3 +16,7 @@
 
 - [ ] Core test: removing an account returns `RemoveAvatar` for its id.
 - [ ] Manual check in the bundled app: remove an account; its avatar is gone from the sidebar and from the app data `avatars` folder.
+
+## Answer
+
+Done on `refactor/architecture`. Commit 60cee6b. The four checks exit 0 at 831d0e4 (145 tests). Not done: the manual check in the bundled `.app`.

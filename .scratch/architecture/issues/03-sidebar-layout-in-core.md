@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## Decisions
 
@@ -18,3 +18,7 @@
 - [ ] Core tests: `Layout` widths for each mode (narrow, wide, auto-hide shown, auto-hide hidden).
 - [ ] `main.rs` has no `SIDEBAR_SHOWN` static and no width math.
 - [ ] Manual check in the bundled app: toggle wide, turn on auto-hide, move the mouse over the edge; the sidebar and pages lay out as before.
+
+## Answer
+
+Done on `refactor/architecture`. Commit 1527a9b. Review fix a3bbe8d: `EmitSidebarState { wide, auto_hide }` carries its data. The four checks exit 0 at 831d0e4 (145 tests). Not done: the manual check in the bundled `.app`.

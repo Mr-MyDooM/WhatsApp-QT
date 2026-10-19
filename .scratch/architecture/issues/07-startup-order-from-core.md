@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (it changes the appearance Effects to `ApplyPageConfig` and `SetWindowScheme`).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## Decisions
 
@@ -16,3 +16,7 @@
 
 - [ ] Core tests: startup Effect order; no login item Effect when the debug flag is set.
 - [ ] Manual check in the bundled app: start with the window hidden and shown, with auto-start on; the app starts as before.
+
+## Answer
+
+Done on `refactor/architecture`. Commit 3e2b5cd. Review fix 4ddeb0d changes the decision: `SettingsLoaded` returns the appearance, sidebar and login item Effects. A new `Event::TraySetUp`, sent after the tray and Dock setup, returns the start window Effects. This keeps the old start order. A failed login item re-register only logs (`Effect::ReregisterAutostart`). The four checks exit 0 at 831d0e4 (145 tests). Not done: the manual check in the bundled `.app`.

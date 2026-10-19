@@ -4,7 +4,7 @@
 
 **Blocked by:** 04 (it adds ts-rs and the drift test).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## Decisions
 
@@ -18,3 +18,7 @@
 - [ ] `main.rs` has no hand-built sidebar JSON.
 - [ ] The drift test and `pnpm --dir frontend build` pass.
 - [ ] Manual check in the bundled app: add, rename, switch and remove an account; unread counts show; the sidebar looks as before.
+
+## Answer
+
+Done on `refactor/architecture`. Commits 0b325f9 and d1effce. Review fix d496091: `ShowUnread { view, total }` carries the view, so the sidebar gets one update per change. The four checks exit 0 at 831d0e4 (145 tests). Not done: the manual check in the bundled `.app`.
