@@ -23,8 +23,8 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use crate::avatar::Avatars;
 use crate::core::{
-    avatar_hue, initials, is_account_origin, is_whatsapp_frame_origin, theme_css, Core, Effect,
-    Event, MenuAccount, NotificationBlock,
+    avatar_hue, initials, is_account_origin, is_page_local_url, is_whatsapp_frame_origin,
+    theme_css, Core, Effect, Event, MenuAccount, NotificationBlock,
 };
 
 /// Avatar column. Wider than the macOS traffic lights (about 70 px), so they never reach the
@@ -290,6 +290,7 @@ fn delete_account_data(app: &AppHandle, id: &str) {
 /// Opens http and https links in the default browser. Other schemes are dropped.
 fn open_in_browser(url: &url::Url) {
     if !matches!(url.scheme(), "http" | "https") {
+        eprintln!("Blocked navigation to {url}");
         return;
     }
     if let Err(e) = tauri_plugin_opener::open_url(url.as_str(), None::<&str>) {
@@ -312,7 +313,7 @@ fn add_account_webview(
     // in the default browser. This check also runs for frames, so WhatsApp's own frame
     // hosts load in place.
     .on_navigation(|url| {
-        if is_account_origin(url) || is_whatsapp_frame_origin(url) {
+        if is_account_origin(url) || is_whatsapp_frame_origin(url) || is_page_local_url(url) {
             return true;
         }
         open_in_browser(url);

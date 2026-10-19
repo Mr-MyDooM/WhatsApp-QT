@@ -1156,6 +1156,12 @@ pub fn is_whatsapp_frame_origin(url: &url::Url) -> bool {
         && url.host_str().is_some_and(|h| h.ends_with(".whatsapp.net"))
 }
 
+/// True for URLs that only hold content made by the page itself (about:blank, blob:, data:).
+/// WhatsApp Web loads frames from them, and they cannot go to another site.
+pub fn is_page_local_url(url: &url::Url) -> bool {
+    matches!(url.scheme(), "about" | "blob" | "data")
+}
+
 /// Avatar letters: one word gives one letter, more words give the first letters of the first two.
 pub fn initials(name: &str) -> String {
     name.split_whitespace()
@@ -2632,6 +2638,17 @@ mod tests {
         assert!(!ok("https://whatsapp.net.evil.com/"));
         assert!(!ok("https://evilwhatsapp.net/"));
         assert!(!ok("https://flows.whatsapp.net:8443/"));
+    }
+
+    #[test]
+    fn only_about_blob_and_data_urls_are_page_local() {
+        let ok = |u: &str| is_page_local_url(&url::Url::parse(u).unwrap());
+        assert!(ok("about:blank"));
+        assert!(ok("about:srcdoc"));
+        assert!(ok("blob:https://web.whatsapp.com/0b1c2d3e"));
+        assert!(ok("data:text/html,hi"));
+        assert!(!ok("file:///etc/passwd"));
+        assert!(!ok("https://example.com/"));
     }
 
     #[test]
