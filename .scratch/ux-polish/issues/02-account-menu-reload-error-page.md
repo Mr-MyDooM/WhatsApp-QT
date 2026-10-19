@@ -6,14 +6,14 @@
 
 **Status:** ready-for-agent
 
-- [ ] Right-click on an account opens a native menu with Rename, Reload and Remove.
-- [ ] Rename lets the user type a new account name. Empty or whitespace-only names are refused. The name is trimmed and has a maximum length.
-- [ ] A renamed account shows its new name in the sidebar, the tray and message notifications. The name is saved and stays after a restart.
-- [ ] Renaming never changes the account's UUID or data store, so the account stays logged in.
-- [ ] Reload in the menu reloads that account only. Cmd+R reloads the active account only.
-- [ ] Remove shows a native confirmation that names the account. Cancel leaves the account as it was.
-- [ ] A failed page load or an offline Mac shows the error panel in that account's area only. The other accounts are not affected.
-- [ ] Retry reloads the account. The automatic retry uses backoff with a maximum interval, and stops when the page loads.
-- [ ] The error panel goes away when the page loads.
-- [ ] Rename, remove and the retry schedule are tested through the core (event in, effects out).
-- [ ] Saves still follow the save-blocked rule.
+- [x] Right-click on an account opens a native menu with Rename, Reload and Remove.
+- [x] Rename lets the user type a new account name. Empty or whitespace-only names are refused. The name is trimmed and has a maximum length.
+- [x] A renamed account shows its new name in the sidebar, the tray and message notifications. The name is saved and stays after a restart.
+- [x] Renaming never changes the account's UUID or data store, so the account stays logged in.
+- [x] Reload in the menu reloads that account only. Cmd+R reloads the active account only.
+- [x] Remove shows a native confirmation that names the account. Cancel leaves the account as it was.
+- [x] A failed page load or an offline Mac shows the error panel in that account's area only. The other accounts are not affected.
+- [x] Retry reloads the account. The automatic retry uses backoff with a maximum interval, and stops when the page loads.
+- [x] The error panel goes away when the page loads.
+- [x] Rename, remove and the retry schedule are tested through the core (event in, effects out).
+- [x] Saves still follow the save-blocked rule.

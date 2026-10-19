@@ -1,0 +1,6 @@
+{
+  "identifier": "rename",
+  "windows": ["rename"],
+  "webviews": ["rename"],
+  "permissions": ["allow-rename-account", "allow-cancel-rename"]
+}

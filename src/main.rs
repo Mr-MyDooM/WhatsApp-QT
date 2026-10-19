@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::menu::{ContextMenu, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::{PageLoadEvent, WebviewBuilder};
 use tauri::{
@@ -25,6 +25,8 @@ const WINDOW_WIDTH: f64 = 1200.0;
 const WINDOW_HEIGHT: f64 = 800.0;
 const ACCOUNT_URL: &str = "https://web.whatsapp.com";
 const ACCOUNT_LABEL_PREFIX: &str = "account-";
+const ERROR_LABEL_PREFIX: &str = "error-";
+const RENAME_LABEL: &str = "rename";
 const SIDEBAR_LABEL: &str = "sidebar";
 const MAX_SWITCH_SHORTCUTS: usize = 9;
 const SETTINGS_LABEL: &str = "settings";
@@ -45,6 +47,54 @@ fn settings_path() -> Option<PathBuf> {
 
 fn account_label(id: &str) -> String {
     format!("{ACCOUNT_LABEL_PREFIX}{id}")
+}
+
+/// Label of the local error panel that covers one account's area.
+fn error_label(id: &str) -> String {
+    format!("{ERROR_LABEL_PREFIX}{id}")
+}
+
+/// Runs `event` after `secs`. One short-lived thread per timer: there are few of them.
+fn dispatch_later(app: &AppHandle, secs: u64, event: Event) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(secs));
+        dispatch(&app, event);
+    });
+}
+
+/// Covers the account's area with the local error panel. Does nothing if it is there.
+fn show_load_error(app: &AppHandle, id: &str) {
+    let label = error_label(id);
+    if app.get_webview(&label).is_some() {
+        return;
+    }
+    let Some(window) = app.get_window("main") else {
+        return;
+    };
+    let size = match (window.inner_size(), window.scale_factor()) {
+        (Ok(size), Ok(scale)) => size.to_logical::<f64>(scale),
+        _ => return,
+    };
+    let result = window.add_child(
+        WebviewBuilder::new(label, WebviewUrl::App("error.html".into())),
+        LogicalPosition::new(SIDEBAR_WIDTH, 0.0),
+        LogicalSize::new((size.width - SIDEBAR_WIDTH).max(1.0), size.height),
+    );
+    if let Err(e) = result {
+        eprintln!("Could not show the error panel for account {id}: {e}");
+        return;
+    }
+    // The panel starts visible: hide it again if the account is not the active one.
+    let active = app
+        .state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .active_account_id()
+        .map(str::to_string);
+    if let Some(active) = active {
+        show_account(app, &active);
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -286,9 +336,10 @@ fn show_main_window(app: &AppHandle) {
 
 fn show_account(app: &AppHandle, id: &str) {
     let active = account_label(id);
+    let active_error = error_label(id);
     for (label, webview) in app.webviews() {
-        if label.starts_with(ACCOUNT_LABEL_PREFIX) {
-            let _ = if label == active {
+        if label.starts_with(ACCOUNT_LABEL_PREFIX) || label.starts_with(ERROR_LABEL_PREFIX) {
+            let _ = if label == active || label == active_error {
                 webview.show()
             } else {
                 webview.hide()
@@ -302,7 +353,7 @@ fn layout(app: &AppHandle, window: &tauri::Window, size: tauri::PhysicalSize<u32
     for (label, webview) in app.webviews() {
         if label == SIDEBAR_LABEL {
             let _ = webview.set_size(LogicalSize::new(SIDEBAR_WIDTH, size.height));
-        } else if label.starts_with(ACCOUNT_LABEL_PREFIX) {
+        } else if label.starts_with(ACCOUNT_LABEL_PREFIX) || label.starts_with(ERROR_LABEL_PREFIX) {
             let _ = webview.set_position(LogicalPosition::new(SIDEBAR_WIDTH, 0.0));
             let _ = webview.set_size(LogicalSize::new(
                 (size.width - SIDEBAR_WIDTH).max(1.0),
@@ -357,8 +408,9 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                 let Some(window) = app.get_window("main") else {
                     continue;
                 };
-                if let Err(e) = add_account_webview(app, &window, &id) {
-                    eprintln!("Could not create account webview {id}: {e}");
+                match add_account_webview(app, &window, &id) {
+                    Ok(()) => dispatch(app, Event::AccountLoadBegan { id }),
+                    Err(e) => eprintln!("Could not create account webview {id}: {e}"),
                 }
             }
             Effect::CloseAccountWebview { id } => {
@@ -474,6 +526,28 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                     Err(e) => eprintln!("Could not parse chat URL: {e}"),
                 }
             }
+            Effect::ReloadAccount { id } => {
+                // Loads the start page again. Cookies, local storage and IndexedDB stay.
+                if let Some(webview) = app.get_webview(&account_label(&id)) {
+                    if let Err(e) = webview.navigate(ACCOUNT_URL.parse().expect("valid URL")) {
+                        eprintln!("Could not reload account {id}: {e}");
+                    }
+                }
+            }
+            Effect::ScheduleLoadCheck { id, attempt, secs } => {
+                dispatch_later(app, secs, Event::LoadCheckDue { id, attempt })
+            }
+            Effect::ScheduleRetry { id, attempt, secs } => {
+                dispatch_later(app, secs, Event::RetryDue { id, attempt })
+            }
+            Effect::ShowLoadError { id } => show_load_error(app, &id),
+            Effect::HideLoadError { id } => {
+                if let Some(webview) = app.get_webview(&error_label(&id)) {
+                    if let Err(e) = webview.close() {
+                        eprintln!("Could not close the error panel for account {id}: {e}");
+                    }
+                }
+            }
             Effect::ShowUnread { counts, total } => show_unread(app, counts, total),
         }
     }
@@ -548,6 +622,102 @@ fn confirm_remove_account(app: &AppHandle, id: String) {
 #[tauri::command]
 fn remove_account(app: AppHandle, id: String) {
     confirm_remove_account(&app, id);
+}
+
+/// Opens the native menu for one account at the pointer.
+#[tauri::command]
+fn show_account_menu(app: AppHandle, id: String) {
+    let Some(window) = app.get_window("main") else {
+        return;
+    };
+    let result = (|| -> tauri::Result<()> {
+        let menu = Menu::with_items(
+            &app,
+            &[
+                &MenuItem::with_id(
+                    &app,
+                    format!("{MENU_CTX_RENAME}{id}"),
+                    "Rename...",
+                    true,
+                    None::<&str>,
+                )?,
+                &MenuItem::with_id(
+                    &app,
+                    format!("{MENU_CTX_RELOAD}{id}"),
+                    "Reload",
+                    true,
+                    None::<&str>,
+                )?,
+                &MenuItem::with_id(
+                    &app,
+                    format!("{MENU_CTX_REMOVE}{id}"),
+                    "Remove...",
+                    true,
+                    None::<&str>,
+                )?,
+            ],
+        )?;
+        menu.popup(window)
+    })();
+    if let Err(e) = result {
+        eprintln!("Could not show the account menu: {e}");
+    }
+}
+
+/// Asks for a new account name in a small local window.
+fn open_rename(app: &AppHandle, id: &str) {
+    if let Some(w) = app.get_webview_window(RENAME_LABEL) {
+        let _ = w.set_focus();
+        return;
+    }
+    let Some(name) = app
+        .state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .account_name(id)
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let mut url = url::Url::parse("http://localhost/rename.html").expect("valid URL");
+    url.query_pairs_mut()
+        .append_pair("id", id)
+        .append_pair("name", &name);
+    let path = format!("rename.html?{}", url.query().unwrap_or_default());
+    let result = WebviewWindowBuilder::new(app, RENAME_LABEL, WebviewUrl::App(path.into()))
+        .title("Rename account")
+        .inner_size(360.0, 140.0)
+        .resizable(false)
+        .build();
+    if let Err(e) = result {
+        eprintln!("Could not open rename window: {e}");
+    }
+}
+
+fn close_rename(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window(RENAME_LABEL) {
+        let _ = w.close();
+    }
+}
+
+// Allowed for the local rename window only: see `capabilities/rename.json`.
+#[tauri::command]
+fn rename_account(app: AppHandle, id: String, name: String) {
+    dispatch(&app, Event::RenameAccount { id, name });
+    close_rename(&app);
+}
+
+#[tauri::command]
+fn cancel_rename(app: AppHandle) {
+    close_rename(&app);
+}
+
+/// The Retry button of the error panel. The account comes from the calling webview's label.
+#[tauri::command]
+fn retry_account(app: AppHandle, webview: tauri::Webview) {
+    if let Some(id) = webview.label().strip_prefix(ERROR_LABEL_PREFIX) {
+        dispatch(&app, Event::ReloadRequested { id: id.to_string() });
+    }
 }
 
 fn toggle_window(app: &AppHandle) {
@@ -758,6 +928,10 @@ const MENU_ADD: &str = "account-add";
 const MENU_REMOVE: &str = "account-remove";
 const MENU_NEXT: &str = "account-next";
 const MENU_PREVIOUS: &str = "account-previous";
+const MENU_RELOAD: &str = "account-reload";
+const MENU_CTX_RENAME: &str = "ctx-rename:";
+const MENU_CTX_RELOAD: &str = "ctx-reload:";
+const MENU_CTX_REMOVE: &str = "ctx-remove:";
 const MENU_SWITCH_PREFIX: &str = "account-switch-";
 
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
@@ -807,6 +981,13 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                 "Remove Account",
                 true,
                 Some("CmdOrCtrl+W"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                MENU_RELOAD,
+                "Reload Account",
+                true,
+                Some("CmdOrCtrl+R"),
             )?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, MENU_NEXT, "Next Account", true, Some("Ctrl+Tab"))?,
@@ -885,6 +1066,17 @@ fn on_menu_event(app: &AppHandle, id: &str) {
                 confirm_remove_account(app, id);
             }
         }
+        MENU_RELOAD => {
+            let active = app
+                .state::<Mutex<Core>>()
+                .lock()
+                .expect("core lock")
+                .active_account_id()
+                .map(str::to_string);
+            if let Some(id) = active {
+                dispatch(app, Event::ReloadRequested { id });
+            }
+        }
         MENU_SETTINGS => open_settings(app),
         MENU_NOTIFICATIONS => dispatch(app, Event::NotificationsToggled),
         MENU_ZOOM_IN => dispatch(app, Event::ZoomStepped { delta: ZOOM_STEP }),
@@ -892,6 +1084,16 @@ fn on_menu_event(app: &AppHandle, id: &str) {
         MENU_ZOOM_RESET => dispatch(app, Event::ZoomChanged { factor: 1.0 }),
         MENU_NEXT => dispatch(app, Event::SwitchRelative(1)),
         MENU_PREVIOUS => dispatch(app, Event::SwitchRelative(-1)),
+        _ if id.starts_with(MENU_CTX_RENAME) => open_rename(app, &id[MENU_CTX_RENAME.len()..]),
+        _ if id.starts_with(MENU_CTX_RELOAD) => dispatch(
+            app,
+            Event::ReloadRequested {
+                id: id[MENU_CTX_RELOAD.len()..].to_string(),
+            },
+        ),
+        _ if id.starts_with(MENU_CTX_REMOVE) => {
+            confirm_remove_account(app, id[MENU_CTX_REMOVE.len()..].to_string())
+        }
         _ => {
             if let Some(n) = id
                 .strip_prefix(MENU_SWITCH_PREFIX)
@@ -929,6 +1131,10 @@ fn main() {
             add_account,
             switch_account,
             remove_account,
+            show_account_menu,
+            rename_account,
+            cancel_rename,
+            retry_account,
             get_settings,
             notification_permission,
             request_notification_permission,
@@ -949,17 +1155,22 @@ fn main() {
                     tauri_plugin_window_state::StateFlags::SIZE
                         | tauri_plugin_window_state::StateFlags::POSITION,
                 )
-                .with_denylist(&[SETTINGS_LABEL])
+                .with_denylist(&[SETTINGS_LABEL, RENAME_LABEL])
                 .build(),
         )
         .menu(build_menu)
         .on_menu_event(|app, event| on_menu_event(app, event.id().as_ref()))
         .on_page_load(|webview, payload| {
-            if payload.event() != PageLoadEvent::Finished
-                || !webview.label().starts_with(ACCOUNT_LABEL_PREFIX)
-            {
+            let Some(id) = webview.label().strip_prefix(ACCOUNT_LABEL_PREFIX) else {
+                return;
+            };
+            if payload.event() != PageLoadEvent::Finished {
                 return;
             }
+            dispatch(
+                webview.app_handle(),
+                Event::PageLoaded { id: id.to_string() },
+            );
             let (css, zoom) = {
                 let state = webview.app_handle().state::<Mutex<Core>>();
                 let core = state.lock().expect("core lock");

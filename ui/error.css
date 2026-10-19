@@ -1,0 +1,8 @@
+:root { --bg: #f0f2f5; --fg: #111b21; --btn: #00a884; --btn-fg: #fff; --focus: #005c4b; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #111b21; --fg: #e9edef; --btn: #25d366; --btn-fg: #111b21; --focus: #8fe9c6; }
+}
+body { margin: 0; height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--bg); color: var(--fg); font: 15px sans-serif; }
+main { text-align: center; }
+button { padding: 8px 24px; border: 0; border-radius: 18px; background: var(--btn); color: var(--btn-fg); font: bold 14px sans-serif; cursor: pointer; }
+button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }

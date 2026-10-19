@@ -33,7 +33,7 @@ function render() {
       el.addEventListener("click", () => invoke("switch_account", { id: a.id }));
       el.addEventListener("contextmenu", (e) => {
         e.preventDefault();
-        invoke("remove_account", { id: a.id });
+        invoke("show_account_menu", { id: a.id });
       });
       return el;
     }),

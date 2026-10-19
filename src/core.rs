@@ -8,6 +8,11 @@ const DEFAULT_ACCOUNT_NAME: &str = "Account 1";
 const MIN_ZOOM: f64 = 0.25;
 const MAX_ZOOM: f64 = 3.0;
 /// Caps for text from the web page, which is untrusted.
+const MAX_ACCOUNT_NAME_CHARS: usize = 40;
+/// A page that has not finished loading after this long counts as failed.
+const LOAD_TIMEOUT_SECS: u64 = 30;
+const RETRY_BASE_SECS: u64 = 5;
+const RETRY_MAX_SECS: u64 = 300;
 const MAX_TITLE_CHARS: usize = 100;
 const MAX_BODY_CHARS: usize = 300;
 const MAX_SOUND_PATH_CHARS: usize = 1024;
@@ -184,6 +189,13 @@ pub enum Sound {
     File(String),
 }
 
+/// Wait before automatic retry number `failures` (1 for the first): doubles, up to a maximum.
+fn retry_delay_secs(failures: u32) -> u64 {
+    RETRY_BASE_SECS
+        .saturating_mul(1u64 << failures.saturating_sub(1).min(16))
+        .min(RETRY_MAX_SECS)
+}
+
 fn cut(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
 }
@@ -288,6 +300,33 @@ pub enum Event {
         id: String,
         result: Result<(), String>,
     },
+    /// The user renamed an account. The name is trimmed and cut; a blank name is refused.
+    RenameAccount {
+        id: String,
+        name: String,
+    },
+    /// The shell started to load an account's page for the first time.
+    AccountLoadBegan {
+        id: String,
+    },
+    /// An account's page finished loading.
+    PageLoaded {
+        id: String,
+    },
+    /// The load timer of `attempt` ran out.
+    LoadCheckDue {
+        id: String,
+        attempt: u64,
+    },
+    /// The retry timer set after failed `attempt` ran out.
+    RetryDue {
+        id: String,
+        attempt: u64,
+    },
+    /// Reload menu item, Cmd+R, or the Retry button. Never touches the account's data.
+    ReloadRequested {
+        id: String,
+    },
     /// An account webview's page title changed. Untrusted: WhatsApp Web sets it.
     TitleChanged {
         id: String,
@@ -350,6 +389,26 @@ pub enum Effect {
         id: String,
         url: String,
     },
+    /// Load the account's WhatsApp Web page again. The data store stays as it is.
+    ReloadAccount {
+        id: String,
+    },
+    ScheduleLoadCheck {
+        id: String,
+        attempt: u64,
+        secs: u64,
+    },
+    ScheduleRetry {
+        id: String,
+        attempt: u64,
+        secs: u64,
+    },
+    ShowLoadError {
+        id: String,
+    },
+    HideLoadError {
+        id: String,
+    },
     /// Unread count of each account that has unread chats, and the total over all accounts.
     ShowUnread {
         counts: BTreeMap<String, u32>,
@@ -357,8 +416,27 @@ pub enum Effect {
     },
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+enum LoadStatus {
+    #[default]
+    Loading,
+    Loaded,
+    Failed,
+}
+
+/// Load progress of one account's page. Not saved.
+#[derive(Debug, Default)]
+struct LoadState {
+    /// Grows with each load try, so a timer from an older try can be told apart.
+    attempt: u64,
+    status: LoadStatus,
+    /// Failed tries in a row; sets the retry delay.
+    failures: u32,
+}
+
 #[derive(Default)]
 pub struct Core {
+    loads: BTreeMap<String, LoadState>,
     settings: Settings,
     /// Set when the settings file exists but could not be read or parsed.
     /// Saving would overwrite the user's file with defaults, so it is skipped.
@@ -375,6 +453,17 @@ impl Core {
             Event::SettingsLoaded { raw, fresh_id } => self.load(raw, fresh_id),
             Event::AddAccount { fresh_id } => self.add(fresh_id),
             Event::RemoveAccount { id, fresh_id } => self.remove(&id, fresh_id),
+            Event::RenameAccount { id, name } => self.rename(&id, &name),
+            Event::AccountLoadBegan { id } => self.begin_load(id, false),
+            Event::PageLoaded { id } => self.page_loaded(&id),
+            Event::LoadCheckDue { id, attempt } => self.load_check_due(id, attempt),
+            Event::RetryDue { id, attempt } => match self.loads.get(&id) {
+                Some(l) if l.status == LoadStatus::Failed && l.attempt == attempt => {
+                    self.begin_load(id, true)
+                }
+                _ => Vec::new(),
+            },
+            Event::ReloadRequested { id } => self.begin_load(id, true),
             Event::SwitchAccount { id } => self.switch(&id),
             Event::SwitchToIndex(i) => match self.settings.accounts.get(i) {
                 Some(a) => {
@@ -743,6 +832,71 @@ impl Core {
         effects
     }
 
+    fn rename(&mut self, id: &str, name: &str) -> Vec<Effect> {
+        let name = cut(name.trim(), MAX_ACCOUNT_NAME_CHARS);
+        let name = name.trim_end();
+        let Some(account) = self.settings.accounts.iter_mut().find(|a| a.id == id) else {
+            return Vec::new();
+        };
+        if name.is_empty() {
+            return Vec::new();
+        }
+        account.name = name.to_string();
+        let mut effects = vec![self.render()];
+        self.save(&mut effects);
+        effects
+    }
+
+    /// Starts a load try for a known account. `reload` also tells the shell to load the page.
+    fn begin_load(&mut self, id: String, reload: bool) -> Vec<Effect> {
+        if !self.settings.accounts.iter().any(|a| a.id == id) {
+            return Vec::new();
+        }
+        let load = self.loads.entry(id.clone()).or_default();
+        load.attempt += 1;
+        load.status = LoadStatus::Loading;
+        let mut effects = Vec::new();
+        if reload {
+            effects.push(Effect::ReloadAccount { id: id.clone() });
+        }
+        effects.push(Effect::ScheduleLoadCheck {
+            id,
+            attempt: load.attempt,
+            secs: LOAD_TIMEOUT_SECS,
+        });
+        effects
+    }
+
+    fn page_loaded(&mut self, id: &str) -> Vec<Effect> {
+        let Some(load) = self.loads.get_mut(id) else {
+            return Vec::new();
+        };
+        let was_failed = load.status == LoadStatus::Failed;
+        load.status = LoadStatus::Loaded;
+        load.failures = 0;
+        if was_failed {
+            vec![Effect::HideLoadError { id: id.to_string() }]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn load_check_due(&mut self, id: String, attempt: u64) -> Vec<Effect> {
+        let Some(load) = self.loads.get_mut(&id) else {
+            return Vec::new();
+        };
+        if load.status != LoadStatus::Loading || load.attempt != attempt {
+            return Vec::new();
+        }
+        load.status = LoadStatus::Failed;
+        load.failures = load.failures.saturating_add(1);
+        let secs = retry_delay_secs(load.failures);
+        vec![
+            Effect::ShowLoadError { id: id.clone() },
+            Effect::ScheduleRetry { id, attempt, secs },
+        ]
+    }
+
     fn remove(&mut self, id: &str, fresh_id: String) -> Vec<Effect> {
         let Some(pos) = self.settings.accounts.iter().position(|a| a.id == id) else {
             return Vec::new();
@@ -767,6 +921,13 @@ impl Core {
             id: self.settings.active_account.clone().expect("set above"),
         });
         effects.push(self.render());
+        if self
+            .loads
+            .remove(id)
+            .is_some_and(|l| l.status == LoadStatus::Failed)
+        {
+            effects.push(Effect::HideLoadError { id: id.to_string() });
+        }
         if self.unread.remove(id).is_some() {
             effects.push(self.show_unread());
         }
@@ -2087,5 +2248,191 @@ mod tests {
         assert!(!ok("https://web.whatsapp.com.evil.com/"));
         assert!(!ok("https://example.com/"));
         assert!(!ok("https://web.whatsapp.com:8443/"));
+    }
+
+    #[test]
+    fn rename_trims_and_saves_and_keeps_the_id() {
+        let mut core = started(TWO);
+        let effects = core.handle(Event::RenameAccount {
+            id: "b".into(),
+            name: "  Work  ".into(),
+        });
+        let out = saved(&effects);
+        assert_eq!(out["accounts"][1]["id"], "b");
+        assert_eq!(out["accounts"][1]["name"], "Work");
+        assert!(effects.iter().any(
+            |e| matches!(e, Effect::RenderSidebar { accounts, .. } if accounts[1].name == "Work")
+        ));
+        assert_eq!(core.account_name("b"), Some("Work"));
+    }
+
+    #[test]
+    fn rename_to_blank_or_unknown_account_does_nothing() {
+        let mut core = started(TWO);
+        for (id, name) in [("a", ""), ("a", " \t "), ("zz", "Work")] {
+            let effects = core.handle(Event::RenameAccount {
+                id: id.into(),
+                name: name.into(),
+            });
+            assert!(effects.is_empty());
+        }
+        assert_eq!(core.account_name("a"), Some("Account 1"));
+    }
+
+    #[test]
+    fn rename_cuts_long_names() {
+        let mut core = started(TWO);
+        core.handle(Event::RenameAccount {
+            id: "a".into(),
+            name: "x".repeat(MAX_ACCOUNT_NAME_CHARS + 20),
+        });
+        assert_eq!(
+            core.account_name("a").unwrap().chars().count(),
+            MAX_ACCOUNT_NAME_CHARS
+        );
+    }
+
+    #[test]
+    fn rename_with_blocked_save_renames_but_does_not_save() {
+        let mut core = started("{not json");
+        let id = core.active_account_id().unwrap().to_string();
+        let effects = core.handle(Event::RenameAccount {
+            id,
+            name: "Work".into(),
+        });
+        assert!(!has_save(&effects));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, Effect::RenderSidebar { .. })));
+    }
+
+    #[test]
+    fn retry_delay_doubles_and_stops_at_the_maximum() {
+        let delays: Vec<_> = (1..=8).map(retry_delay_secs).collect();
+        assert_eq!(delays, [5, 10, 20, 40, 80, 160, 300, 300]);
+    }
+
+    fn fail_load(core: &mut Core, id: &str) -> Vec<Effect> {
+        let began = core.handle(Event::AccountLoadBegan { id: id.into() });
+        let attempt = match began[..] {
+            [Effect::ScheduleLoadCheck { attempt, .. }] => attempt,
+            _ => panic!("expected one load check, got {began:?}"),
+        };
+        core.handle(Event::LoadCheckDue {
+            id: id.into(),
+            attempt,
+        })
+    }
+
+    #[test]
+    fn page_that_never_loads_shows_error_and_schedules_retry() {
+        let mut core = started(TWO);
+        let effects = fail_load(&mut core, "a");
+        assert!(effects.contains(&Effect::ShowLoadError { id: "a".into() }));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, Effect::ScheduleRetry { id, secs: 5, .. } if id == "a")));
+    }
+
+    #[test]
+    fn loaded_page_ignores_the_load_check() {
+        let mut core = started(TWO);
+        let began = core.handle(Event::AccountLoadBegan { id: "a".into() });
+        core.handle(Event::PageLoaded { id: "a".into() });
+        let Effect::ScheduleLoadCheck { attempt, .. } = began[0] else {
+            panic!("load check")
+        };
+        let effects = core.handle(Event::LoadCheckDue {
+            id: "a".into(),
+            attempt,
+        });
+        assert!(effects.is_empty());
+    }
+
+    #[test]
+    fn load_failure_affects_only_that_account() {
+        let mut core = started(TWO);
+        core.handle(Event::AccountLoadBegan { id: "b".into() });
+        core.handle(Event::PageLoaded { id: "b".into() });
+        let effects = fail_load(&mut core, "a");
+        assert!(!effects
+            .iter()
+            .any(|e| matches!(e, Effect::ShowLoadError { id } if id == "b")));
+    }
+
+    #[test]
+    fn retry_reloads_the_account_and_backs_off_on_the_next_failure() {
+        let mut core = started(TWO);
+        let first = fail_load(&mut core, "a");
+        let Some(Effect::ScheduleRetry { attempt, .. }) = first
+            .iter()
+            .find(|e| matches!(e, Effect::ScheduleRetry { .. }))
+        else {
+            panic!("retry")
+        };
+        let effects = core.handle(Event::RetryDue {
+            id: "a".into(),
+            attempt: *attempt,
+        });
+        assert!(effects.contains(&Effect::ReloadAccount { id: "a".into() }));
+        let Some(Effect::ScheduleLoadCheck { attempt, .. }) = effects
+            .iter()
+            .find(|e| matches!(e, Effect::ScheduleLoadCheck { .. }))
+        else {
+            panic!("check")
+        };
+        let again = core.handle(Event::LoadCheckDue {
+            id: "a".into(),
+            attempt: *attempt,
+        });
+        assert!(again
+            .iter()
+            .any(|e| matches!(e, Effect::ScheduleRetry { secs: 10, .. })));
+    }
+
+    #[test]
+    fn page_load_clears_the_error_and_stops_retrying() {
+        let mut core = started(TWO);
+        let first = fail_load(&mut core, "a");
+        let Some(Effect::ScheduleRetry { attempt, .. }) = first
+            .iter()
+            .find(|e| matches!(e, Effect::ScheduleRetry { .. }))
+        else {
+            panic!("retry")
+        };
+        let attempt = *attempt;
+        let effects = core.handle(Event::PageLoaded { id: "a".into() });
+        assert_eq!(effects, [Effect::HideLoadError { id: "a".into() }]);
+        assert!(core
+            .handle(Event::RetryDue {
+                id: "a".into(),
+                attempt
+            })
+            .is_empty());
+    }
+
+    #[test]
+    fn manual_reload_uses_the_same_path_and_never_touches_data() {
+        let mut core = started(TWO);
+        let effects = core.handle(Event::ReloadRequested { id: "a".into() });
+        assert!(effects.contains(&Effect::ReloadAccount { id: "a".into() }));
+        assert!(!effects.iter().any(|e| matches!(
+            e,
+            Effect::DeleteAccountData { .. } | Effect::ClearAccountCaches { .. }
+        )));
+        assert!(core
+            .handle(Event::ReloadRequested { id: "zz".into() })
+            .is_empty());
+    }
+
+    #[test]
+    fn removing_a_failed_account_hides_its_error() {
+        let mut core = started(TWO);
+        fail_load(&mut core, "b");
+        let effects = core.handle(Event::RemoveAccount {
+            id: "b".into(),
+            fresh_id: "n".into(),
+        });
+        assert!(effects.contains(&Effect::HideLoadError { id: "b".into() }));
     }
 }
