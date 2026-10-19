@@ -7,6 +7,8 @@ const zoomValue = document.getElementById("zoom-value");
 const autostart = document.getElementById("autostart");
 const clearCache = document.getElementById("clear-cache");
 const clearCacheRow = document.getElementById("clear-cache-row");
+const closeToTray = document.getElementById("close-to-tray");
+const startMinimized = document.getElementById("start-minimized");
 const error = document.getElementById("error");
 
 function showZoom(factor) {
@@ -33,9 +35,15 @@ function load() {
     autostart.checked = s.autostart_enabled;
     clearCache.checked = s.clear_cache_on_exit;
     clearCacheRow.hidden = !s.clear_cache_supported;
+    closeToTray.checked = s.close_to_tray;
+    startMinimized.checked = s.start_minimized;
   });
 }
 
+closeToTray.addEventListener("change", () =>
+  invoke("set_close_to_tray", { enabled: closeToTray.checked }));
+startMinimized.addEventListener("change", () =>
+  invoke("set_start_minimized", { enabled: startMinimized.checked }));
 listen("app-error", (e) => {
   error.textContent = e.payload;
   error.hidden = false;

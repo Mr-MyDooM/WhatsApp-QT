@@ -6,12 +6,14 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::{PageLoadEvent, WebviewBuilder};
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Theme, WebviewUrl,
     WebviewWindowBuilder, WindowBuilder, WindowEvent,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_deep_link::DeepLinkExt;
 
 use crate::core::{theme_css, Core, Effect, Event};
 
@@ -105,7 +107,7 @@ fn clear_account_caches(
 }
 
 /// Runs on quit. If a clear is pending, holds the exit until it is done or the timeout hits.
-fn on_exit_requested(app: &AppHandle, api: &tauri::ExitRequestApi) {
+fn begin_quit(app: &AppHandle, api: Option<&tauri::ExitRequestApi>) {
     static HANDLED: AtomicBool = AtomicBool::new(false);
     if HANDLED.swap(true, Ordering::SeqCst) {
         return;
@@ -123,9 +125,14 @@ fn on_exit_requested(app: &AppHandle, api: &tauri::ExitRequestApi) {
         }
     }
     if pending == 0 {
+        if api.is_none() {
+            app.exit(0);
+        }
         return;
     }
-    api.prevent_exit();
+    if let Some(api) = api {
+        api.prevent_exit();
+    }
     let app = app.clone();
     std::thread::spawn(move || {
         let deadline = std::time::Instant::now() + CACHE_CLEAR_TIMEOUT;
@@ -296,7 +303,7 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                     dispatch(app, Event::AutostartFailed { enabled: !enabled });
                 }
             }
-            // Handled in `on_exit_requested`: it must hold the exit until the clear is done.
+            // Handled in `begin_quit`: it must hold the exit until the clear is done.
             Effect::ClearAccountCaches { .. } => {}
             Effect::RenderSidebar { accounts, active } => {
                 let payload = serde_json::json!({ "accounts": accounts, "active": active });
@@ -323,6 +330,37 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
             }
             Effect::ReportError { message } => {
                 report_error(app, "Something went wrong with your settings.", &message)
+            }
+            Effect::ShowWindow => {
+                if let Some(window) = app.get_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            }
+            Effect::HideWindow => {
+                if let Some(window) = app.get_window("main") {
+                    let _ = window.hide();
+                }
+            }
+            Effect::Quit => begin_quit(app, None),
+            Effect::OpenChat { id, url } => {
+                if let Some(window) = app.get_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+                let Some(webview) = app.get_webview(&account_label(&id)) else {
+                    continue;
+                };
+                match url.parse() {
+                    Ok(url) => {
+                        if let Err(e) = webview.navigate(url) {
+                            eprintln!("Could not open chat in account {id}: {e}");
+                        }
+                    }
+                    Err(e) => eprintln!("Could not parse chat URL: {e}"),
+                }
             }
         }
     }
@@ -370,6 +408,48 @@ fn remove_account(app: AppHandle, id: String) {
     );
 }
 
+fn toggle_window(app: &AppHandle) {
+    let window_visible = app
+        .get_window("main")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+    dispatch(app, Event::ToggleWindow { window_visible });
+}
+
+fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    let menu = Menu::with_items(
+        app,
+        &[
+            &MenuItem::with_id(app, TRAY_TOGGLE, "Show/Hide", true, None::<&str>)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, TRAY_QUIT, "Quit", true, None::<&str>)?,
+        ],
+    )?;
+    let mut tray = TrayIconBuilder::new()
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            TRAY_TOGGLE => toggle_window(app),
+            TRAY_QUIT => begin_quit(app, None),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                toggle_window(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
 fn open_settings(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(SETTINGS_LABEL) {
         let _ = w.set_focus();
@@ -392,11 +472,23 @@ fn get_settings(core: tauri::State<Mutex<Core>>) -> serde_json::Value {
     serde_json::json!({
         "theme": core.theme(),
         "zoom_factor": core.zoom_factor(),
+        "close_to_tray": core.close_to_tray(),
+        "start_minimized": core.start_minimized(),
         "autostart_enabled": core.autostart_enabled(),
         "clear_cache_on_exit": core.clear_cache_on_exit(),
         // Only macOS can clear the cache without removing logins.
         "clear_cache_supported": cfg!(target_os = "macos"),
     })
+}
+
+#[tauri::command]
+fn set_close_to_tray(app: AppHandle, enabled: bool) {
+    dispatch(&app, Event::CloseToTrayChanged { enabled });
+}
+
+#[tauri::command]
+fn set_start_minimized(app: AppHandle, enabled: bool) {
+    dispatch(&app, Event::StartMinimizedChanged { enabled });
 }
 
 #[tauri::command]
@@ -419,6 +511,8 @@ fn set_clear_cache_on_exit(app: AppHandle, enabled: bool) {
     dispatch(&app, Event::ClearCacheOnExitChanged { enabled });
 }
 
+const TRAY_TOGGLE: &str = "tray-toggle";
+const TRAY_QUIT: &str = "tray-quit";
 const MENU_SETTINGS: &str = "settings";
 const MENU_ZOOM_IN: &str = "zoom-in";
 const MENU_ZOOM_OUT: &str = "zoom-out";
@@ -554,8 +648,18 @@ fn on_menu_event(app: &AppHandle, id: &str) {
     }
 }
 
+fn dispatch_deep_links(app: &AppHandle, urls: impl IntoIterator<Item = String>) {
+    for url in urls {
+        dispatch(app, Event::DeepLinkOpened { url });
+    }
+}
+
 fn main() {
     tauri::Builder::default()
+        // First, so a second copy hands its link to the running one and exits.
+        // The `deep-link` feature turns the second copy's argv into an on_open_urls call.
+        .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             None,
@@ -569,8 +673,20 @@ fn main() {
             set_theme,
             set_zoom,
             set_autostart,
-            set_clear_cache_on_exit
+            set_clear_cache_on_exit,
+            set_close_to_tray,
+            set_start_minimized
         ])
+        // SIZE and POSITION only: restoring VISIBLE would defeat start-minimized.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION,
+                )
+                .with_denylist(&[SETTINGS_LABEL])
+                .build(),
+        )
         .menu(build_menu)
         .on_menu_event(|app, event| on_menu_event(app, event.id().as_ref()))
         .on_page_load(|webview, payload| {
@@ -591,6 +707,7 @@ fn main() {
             let window = WindowBuilder::new(app, "main")
                 .title("WhatsApp")
                 .inner_size(WINDOW_WIDTH, WINDOW_HEIGHT)
+                .visible(false)
                 .build()?;
             window.add_child(
                 WebviewBuilder::new(SIDEBAR_LABEL, WebviewUrl::App("index.html".into())),
@@ -620,11 +737,32 @@ fn main() {
                 .appearance_effects();
             run_effects(&handle, appearance);
 
+            build_tray(&handle)?;
+            let start = handle
+                .state::<Mutex<Core>>()
+                .lock()
+                .expect("core lock")
+                .start_window_effects();
+            run_effects(&handle, start);
+            // Link that launched the app (argv on Linux and Windows, Apple Event on macOS),
+            // then links that arrive while it runs.
+            let links = app.deep_link();
+            if let Some(urls) = links.get_current()? {
+                dispatch_deep_links(&handle, urls.iter().map(|u| u.to_string()));
+            }
+            let link_handle = handle.clone();
+            links.on_open_url(move |event| {
+                dispatch_deep_links(&link_handle, event.urls().iter().map(|u| u.to_string()));
+            });
+
             let w = window.clone();
-            window.on_window_event(move |event| {
-                if let WindowEvent::Resized(size) = event {
-                    layout(&handle, &w, *size);
+            window.on_window_event(move |event| match event {
+                WindowEvent::Resized(size) => layout(&handle, &w, *size),
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    dispatch(&handle, Event::CloseRequested);
                 }
+                _ => {}
             });
             Ok(())
         })
@@ -632,7 +770,7 @@ fn main() {
         .expect("error while building WhatsApp-QT")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
-                on_exit_requested(app, &api);
+                begin_quit(app, Some(&api));
             }
         });
 }
