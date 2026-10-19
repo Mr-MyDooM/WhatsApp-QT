@@ -258,16 +258,25 @@ fn delete_account_data(app: &AppHandle, id: &str) {
             );
         }
     };
+    // WebKit refuses while the closed webview still holds the store, and the close finishes
+    // a moment later. So try again for a few seconds before reporting the error.
     #[cfg(target_os = "macos")]
     {
+        const ATTEMPTS: u32 = 5;
         let app = app.clone();
         let id = id.to_string();
         let bytes = *uuid.as_bytes();
-        tauri::async_runtime::spawn(async move {
-            let result = app
-                .remove_data_store(bytes)
-                .await
-                .map_err(|e| e.to_string());
+        std::thread::spawn(move || {
+            let mut result = Ok(());
+            for attempt in 1..=ATTEMPTS {
+                std::thread::sleep(Duration::from_secs(1));
+                result = tauri::async_runtime::block_on(app.remove_data_store(bytes))
+                    .map_err(|e| e.to_string());
+                if result.is_ok() {
+                    break;
+                }
+                eprintln!("Account data {id} still in use, attempt {attempt} of {ATTEMPTS}");
+            }
             dispatch(&app, Event::AccountDataDeleted { id, result });
         });
     }
