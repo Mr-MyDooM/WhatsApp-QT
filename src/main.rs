@@ -70,7 +70,24 @@ const SAVE_FAILED_MESSAGE: &str =
 const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
 
 fn settings_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join("Pairline").join("settings.json"))
+}
+
+/// Settings file used before the rename to Pairline.
+fn old_settings_path() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("WhatsAppDesktop").join("settings.json"))
+}
+
+/// Copies the old settings file to the new path when only the old one exists.
+/// A copy, not a move: the old file stays as a backup.
+fn migrate_settings(old: &Path, new: &Path) -> std::io::Result<()> {
+    if new.exists() || !old.exists() {
+        return Ok(());
+    }
+    if let Some(dir) = new.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::copy(old, new).map(|_| ())
 }
 
 fn account_label(id: &str) -> String {
@@ -1798,11 +1815,22 @@ fn main() {
                 LogicalSize::new(WINDOW_WIDTH - SIDEBAR_NARROW, TITLE_BAR_HEIGHT),
             )?;
 
-            let raw = match settings_path().map(|p| (std::fs::read_to_string(&p), p)) {
+            // If the copy fails, start with defaults that are not saved, as for a file
+            // that cannot be read. The old file stays as it is.
+            let raw = match settings_path().map(|p| {
+                let migrated = old_settings_path().map_or(Ok(()), |old| migrate_settings(&old, &p));
+                (migrated, p)
+            }) {
                 None => Ok(None),
-                Some((Ok(text), _)) => Ok(Some(text)),
-                Some((Err(e), _)) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-                Some((Err(e), p)) => Err(format!("Could not read {}: {e}", p.display())),
+                Some((Err(e), p)) => Err(format!(
+                    "Could not copy old settings to {}: {e}",
+                    p.display()
+                )),
+                Some((Ok(()), p)) => match std::fs::read_to_string(&p) {
+                    Ok(text) => Ok(Some(text)),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                    Err(e) => Err(format!("Could not read {}: {e}", p.display())),
+                },
             };
             let handle = app.handle().clone();
             notify::init(handle.clone());
@@ -1824,6 +1852,19 @@ fn main() {
                 .appearance_effects();
             run_effects(&handle, appearance);
             apply_sidebar(&handle);
+            // The login item stores the path of the binary that registered it. Register it
+            // again at each start so it follows a renamed or moved app. Dev builds skip this,
+            // so a dev run does not point the login item at target/debug.
+            let autostart = handle
+                .state::<Mutex<Core>>()
+                .lock()
+                .expect("core lock")
+                .autostart_enabled();
+            if autostart && !cfg!(debug_assertions) {
+                if let Err(e) = handle.autolaunch().enable() {
+                    eprintln!("Could not register start at login again: {e}");
+                }
+            }
 
             build_tray(&handle)?;
             #[cfg(target_os = "macos")]
@@ -1860,7 +1901,7 @@ fn main() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building WhatsApp-QT")
+        .expect("error while building Pairline")
         .run(|app, event| {
             match event {
                 tauri::RunEvent::ExitRequested { api, .. } => begin_quit(app, Some(&api)),
@@ -1895,5 +1936,26 @@ mod tests {
         // Missing folder or no folder set: keep WebKit's path in ~/Downloads.
         assert_eq!(download_destination(d, default), None);
         assert_eq!(download_destination("", default), None);
+    }
+
+    #[test]
+    fn old_settings_are_copied_once_and_never_overwrite_new_ones() {
+        let dir = std::env::temp_dir().join(format!("pairline-cfg-{}", uuid::Uuid::new_v4()));
+        let old = dir.join("WhatsAppDesktop").join("settings.json");
+        let new = dir.join("Pairline").join("settings.json");
+        // Neither file: nothing to copy, nothing made.
+        migrate_settings(&old, &new).unwrap();
+        assert!(!new.exists());
+
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::fs::write(&old, "old").unwrap();
+        migrate_settings(&old, &new).unwrap();
+        assert_eq!(std::fs::read_to_string(&new).unwrap(), "old");
+        assert!(old.exists());
+
+        std::fs::write(&new, "new").unwrap();
+        migrate_settings(&old, &new).unwrap();
+        assert_eq!(std::fs::read_to_string(&new).unwrap(), "new");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

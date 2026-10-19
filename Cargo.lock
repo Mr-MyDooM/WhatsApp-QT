@@ -3,35 +3,6 @@
 version = 4
 
 [[package]]
-name = "WhatsApp-QT"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "block2",
- "dirs 4.0.0",
- "env_logger",
- "log",
- "notify-rust",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "objc2-user-notifications",
- "objc2-web-kit",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-deep-link",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tauri-plugin-single-instance",
- "tauri-plugin-window-state",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2706,6 +2677,35 @@ dependencies = [
  "objc2-foundation",
  "objc2-ui-kit",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "pairline"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "block2",
+ "dirs 4.0.0",
+ "env_logger",
+ "log",
+ "notify-rust",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-user-notifications",
+ "objc2-web-kit",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-deep-link",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-window-state",
+ "url",
+ "uuid",
 ]
 
 [[package]]

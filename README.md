@@ -20,7 +20,7 @@ Pairline is not notarized. macOS blocks it on first launch.
 3. On macOS 15 and later, open System Settings, then Privacy and Security. Scroll down and click Open Anyway.
 4. Open Pairline again and confirm.
 
-If you move from WhatsApp-QT, scan the QR code again one time. The settings file keeps its path and format.
+If you move from WhatsApp-QT, scan the QR code again one time. The app copies your settings to the new folder at the first start.
 
 ## Privacy
 
@@ -30,7 +30,7 @@ If you move from WhatsApp-QT, scan the QR code again one time. The settings file
 
 ## Settings
 
-Settings are in `<config dir>/WhatsAppDesktop/settings.json`. On macOS this is `~/Library/Application Support/WhatsAppDesktop/settings.json`.
+Settings are in `<config dir>/Pairline/settings.json`. On macOS this is `~/Library/Application Support/Pairline/settings.json`.
 
 ## Build from source
 

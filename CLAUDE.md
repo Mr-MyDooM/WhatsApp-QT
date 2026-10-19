@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Pairline (repo and crate still named WhatsApp-QT) is a macOS-first desktop client that wraps WhatsApp Web (`https://web.whatsapp.com`) in a Tauri 2 window: Rust backend, React frontend for the app chrome, one system webview per account, tray icon, persistent settings. Bundle ID `dev.mj.pairline`.
+Pairline (the GitHub repo is still named WhatsApp-QT) is a macOS-first desktop client that wraps WhatsApp Web (`https://web.whatsapp.com`) in a Tauri 2 window: Rust backend, React frontend for the app chrome, one system webview per account, tray icon, persistent settings. Bundle ID `dev.mj.pairline`.
 
 ## Build and Run
 
@@ -36,9 +36,9 @@ React 19, TypeScript, Tailwind and shadcn-style components, built with Vite into
 ### Accounts and data
 
 - Each account has a stable UUID. Its webview label is `account-<uuid>`.
-- macOS: each account uses `data_store_identifier(uuid bytes)`, stored at `~/Library/WebKit/<process name>/WebsiteDataStore/<uuid>`. The dev build process is `WhatsApp-QT`, the bundle is `dev.mj.pairline`, so dev and bundle logins are separate.
+- macOS: each account uses `data_store_identifier(uuid bytes)`, stored at `~/Library/WebKit/<process name>/WebsiteDataStore/<uuid>`. The dev build process is `pairline`, the bundle is `dev.mj.pairline`, so dev and bundle logins are separate.
 - Other platforms: `data_directory` at `<app data>/accounts/<uuid>`.
-- Settings: `<config dir>/WhatsAppDesktop/settings.json`. Data deletes that fail go to `pending_deletions` and run again at the next start.
+- Settings: `<config dir>/Pairline/settings.json`. At start, if only the old `<config dir>/WhatsAppDesktop/settings.json` exists, the app copies it to the new path and keeps the old file. Data deletes that fail go to `pending_deletions` and run again at the next start.
 - Downloads go to `download_path` (set in `on_download`). Empty or a missing folder means the system Downloads folder.
 - Never force a QR re-scan: a change that moves or resets the data store logs every account out.
 
@@ -69,7 +69,7 @@ Tauri is pinned exactly (`=2.12.4`) because the `unstable` child-webview API can
 Each needs its own decision before work starts:
 
 - Native Wayland on Linux (child webviews draw at wrong bounds; start with X11/XWayland via `GDK_BACKEND=x11`).
-- Repo and crate rename from WhatsApp-QT to Pairline.
+- GitHub repo rename from WhatsApp-QT to Pairline. Then update `origin` and the URLs in `Cargo.toml`.
 
 ## Shared background
 
