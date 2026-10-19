@@ -25,8 +25,15 @@
     return el;
   }
 
+  // In a column flex box, flex-basis sets the height, which cuts off the Status and Channels
+  // lists. So set flex only when the parent lays out in a row.
+  function isRow(el) {
+    var s = el.parentElement && getComputedStyle(el.parentElement);
+    return !!s && s.display.indexOf("flex") !== -1 && s.flexDirection.indexOf("row") === 0;
+  }
+
   function size(el) {
-    el.style.flex = width ? "0 0 " + width + "px" : "";
+    el.style.flex = width && isRow(el) ? "0 0 " + width + "px" : "";
     el.style.width = width ? width + "px" : "";
     el.style.maxWidth = width ? "none" : "";
   }
