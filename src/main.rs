@@ -497,13 +497,8 @@ fn emit_sidebar_view(app: &AppHandle, view: &core::SidebarView) {
 }
 
 /// Sidebar gets the new view with each account's count; tray tooltip and Dock badge get the total.
-fn show_unread(app: &AppHandle, total: u32) {
-    let view = app
-        .state::<Mutex<Core>>()
-        .lock()
-        .expect("core lock")
-        .sidebar_view();
-    emit_sidebar_view(app, &view);
+fn show_unread(app: &AppHandle, view: &core::SidebarView, total: u32) {
+    emit_sidebar_view(app, view);
     if let Some(window) = app.get_window("main") {
         // `None` removes the badge.
         let badge = (total > 0).then_some(i64::from(total));
@@ -677,7 +672,7 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                 sidebar,
             } => apply_layout(app, page_start, sidebar),
             Effect::EmitSidebarState => emit_sidebar_state(app),
-            Effect::ShowUnread { total, .. } => show_unread(app, total),
+            Effect::ShowUnread { view, total } => show_unread(app, &view, total),
         }
     }
 }

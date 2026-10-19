@@ -498,9 +498,10 @@ pub enum Effect {
     HideLoadError {
         id: String,
     },
-    /// Unread count of each account that has unread chats, and the total over all accounts.
+    /// Like `RenderSidebar`, and the total unread count over all accounts for the badge and
+    /// the tray tooltip. The view holds each account's count.
     ShowUnread {
-        counts: BTreeMap<String, u32>,
+        view: SidebarView,
         total: u32,
     },
 }
@@ -579,9 +580,9 @@ impl Core {
                     .clone();
                 self.switch(&id)
             }
-            // A fresh sidebar shows no counts, so send them only when there are some.
+            // `ShowUnread` also renders the sidebar. Use it only when there are counts.
             Event::SidebarReady if self.unread.is_empty() => vec![self.render()],
-            Event::SidebarReady => vec![self.render(), self.show_unread()],
+            Event::SidebarReady => vec![self.show_unread()],
             Event::SettingChanged(change) => self.apply_change(change),
             Event::ThemeChanged { theme } => self.set_theme(theme),
             Event::ZoomChanged { factor } => self.set_zoom(factor),
@@ -1049,7 +1050,7 @@ impl Core {
 
     fn show_unread(&self) -> Effect {
         Effect::ShowUnread {
-            counts: self.unread.clone(),
+            view: self.sidebar_view(),
             total: self
                 .unread
                 .values()
@@ -1240,16 +1241,17 @@ impl Core {
         effects.push(Effect::ShowAccount {
             id: self.settings.active_account.clone().expect("set above"),
         });
-        effects.push(self.render());
+        effects.push(if self.unread.remove(id).is_some() {
+            self.show_unread()
+        } else {
+            self.render()
+        });
         if self
             .loads
             .remove(id)
             .is_some_and(|l| l.status == LoadStatus::Failed)
         {
             effects.push(Effect::HideLoadError { id: id.to_string() });
-        }
-        if self.unread.remove(id).is_some() {
-            effects.push(self.show_unread());
         }
         self.save(&mut effects);
         effects
@@ -2415,9 +2417,8 @@ mod tests {
             minutes: 60,
             now: 1000,
         });
-        assert!(core
-            .handle(Event::SidebarReady)
-            .contains(&unread(&[("a", 3)], 3)));
+        let effects = core.handle(Event::SidebarReady);
+        assert!(effects.contains(&unread(&core, 3)));
     }
 
     #[test]
@@ -2711,10 +2712,8 @@ mod tests {
     fn mute_keeps_the_unread_count_and_is_ignored_for_unknown_accounts() {
         let mut core = started(TWO);
         mute(&mut core, "a");
-        assert_eq!(
-            title(&mut core, "a", "(3) WhatsApp"),
-            vec![unread(&[("a", 3)], 3)]
-        );
+        let effects = title(&mut core, "a", "(3) WhatsApp");
+        assert_eq!(effects, vec![unread(&core, 3)]);
         assert!(mute(&mut core, "zz").is_empty());
     }
 
@@ -2755,9 +2754,10 @@ mod tests {
         })
     }
 
-    fn unread(pairs: &[(&str, u32)], total: u32) -> Effect {
+    /// The effect the core's current state should produce.
+    fn unread(core: &Core, total: u32) -> Effect {
         Effect::ShowUnread {
-            counts: pairs.iter().map(|(id, n)| (id.to_string(), *n)).collect(),
+            view: core.sidebar_view(),
             total,
         }
     }
@@ -2765,17 +2765,16 @@ mod tests {
     #[test]
     fn title_with_count_sets_account_unread_count_and_total() {
         let mut core = started(TWO);
-        assert_eq!(
-            title(&mut core, "a", "(3) WhatsApp"),
-            vec![unread(&[("a", 3)], 3)]
-        );
+        let effects = title(&mut core, "a", "(3) WhatsApp");
+        assert_eq!(effects, vec![unread(&core, 3)]);
     }
 
     #[test]
     fn title_without_count_clears_the_account_count() {
         let mut core = started(TWO);
         title(&mut core, "a", "(3) WhatsApp");
-        assert_eq!(title(&mut core, "a", "WhatsApp"), vec![unread(&[], 0)]);
+        let effects = title(&mut core, "a", "WhatsApp");
+        assert_eq!(effects, vec![unread(&core, 0)]);
     }
 
     #[test]
@@ -2793,7 +2792,8 @@ mod tests {
         ] {
             let mut core = started(TWO);
             title(&mut core, "a", "(2) WhatsApp");
-            assert_eq!(title(&mut core, "a", odd), vec![unread(&[], 0)], "{odd}");
+            let effects = title(&mut core, "a", odd);
+            assert_eq!(effects, vec![unread(&core, 0)], "{odd}");
         }
     }
 
@@ -2809,10 +2809,8 @@ mod tests {
     fn total_is_the_sum_over_accounts() {
         let mut core = started(TWO);
         title(&mut core, "a", "(3) WhatsApp");
-        assert_eq!(
-            title(&mut core, "b", "(4) WhatsApp"),
-            vec![unread(&[("a", 3), ("b", 4)], 7)]
-        );
+        let effects = title(&mut core, "b", "(4) WhatsApp");
+        assert_eq!(effects, vec![unread(&core, 7)]);
     }
 
     #[test]
@@ -2830,16 +2828,18 @@ mod tests {
             id: "b".into(),
             fresh_id: "n".into(),
         });
-        assert!(effects.contains(&unread(&[("a", 3)], 3)));
+        assert!(effects.contains(&unread(&core, 3)));
+        assert!(!effects
+            .iter()
+            .any(|e| matches!(e, Effect::RenderSidebar { .. })));
     }
 
     #[test]
-    fn sidebar_ready_also_sends_unread_counts() {
+    fn sidebar_ready_sends_unread_counts_in_one_effect() {
         let mut core = started(TWO);
         title(&mut core, "b", "(2) WhatsApp");
-        assert!(core
-            .handle(Event::SidebarReady)
-            .contains(&unread(&[("b", 2)], 2)));
+        let effects = core.handle(Event::SidebarReady);
+        assert_eq!(effects, vec![unread(&core, 2)]);
     }
 
     #[test]
