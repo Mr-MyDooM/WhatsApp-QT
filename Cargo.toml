@@ -30,13 +30,13 @@ tauri-plugin-autostart = "2.6.0"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 
-# macOS-only: the cache clear on quit calls WKWebsiteDataStore directly, because
-# Tauri only offers clear_all_browsing_data, which also removes logins. Versions match
-# the ones wry already pulls in, so Cargo.lock gains no new crate.
 [features]
 # Serve the built frontend/dist instead of build.devUrl. `cargo tauri build` turns it on.
 custom-protocol = ["tauri/custom-protocol"]
 
+# macOS-only: the cache clear on quit calls WKWebsiteDataStore directly, because
+# Tauri only offers clear_all_browsing_data, which also removes logins. Versions match
+# the ones wry already pulls in, so Cargo.lock gains no new crate.
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
 objc2 = "0.6"
