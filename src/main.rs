@@ -313,11 +313,32 @@ fn toggle_window(app: &AppHandle) {
     dispatch(app, Event::ToggleWindow { window_visible });
 }
 
+/// Current time in Unix seconds. A clock before 1970 counts as 0.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+fn snooze(app: &AppHandle, minutes: u64) {
+    dispatch(
+        app,
+        Event::SnoozeSet {
+            minutes,
+            now: unix_now(),
+        },
+    );
+}
+
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let menu = Menu::with_items(
         app,
         &[
             &MenuItem::with_id(app, TRAY_TOGGLE, "Show/Hide", true, None::<&str>)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, TRAY_SNOOZE_1H, "Snooze 1 hour", true, None::<&str>)?,
+            &MenuItem::with_id(app, TRAY_SNOOZE_8H, "Snooze 8 hours", true, None::<&str>)?,
+            &MenuItem::with_id(app, TRAY_END_SNOOZE, "End Snooze", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, TRAY_QUIT, "Quit", true, None::<&str>)?,
         ],
@@ -327,6 +348,9 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             TRAY_TOGGLE => toggle_window(app),
+            TRAY_SNOOZE_1H => snooze(app, 60),
+            TRAY_SNOOZE_8H => snooze(app, 8 * 60),
+            TRAY_END_SNOOZE => dispatch(app, Event::SnoozeCleared),
             TRAY_QUIT => app.exit(0),
             _ => {}
         })
@@ -375,6 +399,7 @@ fn notify(app: AppHandle, webview: tauri::Webview, title: String, body: String) 
             account_id: id.to_string(),
             title,
             body,
+            now: unix_now(),
         },
     );
 }
@@ -437,6 +462,9 @@ fn set_zoom(app: AppHandle, factor: f64) {
 
 const TRAY_TOGGLE: &str = "tray-toggle";
 const TRAY_QUIT: &str = "tray-quit";
+const TRAY_SNOOZE_1H: &str = "tray-snooze-1h";
+const TRAY_SNOOZE_8H: &str = "tray-snooze-8h";
+const TRAY_END_SNOOZE: &str = "tray-end-snooze";
 const MENU_SETTINGS: &str = "settings";
 const MENU_ZOOM_IN: &str = "zoom-in";
 const MENU_ZOOM_OUT: &str = "zoom-out";

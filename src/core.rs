@@ -141,6 +141,8 @@ pub struct Settings {
     pub window_y: i32,
     pub accounts: Vec<Account>,
     pub active_account: Option<String>,
+    /// Snooze end time in Unix seconds. `None` means no Snooze.
+    pub snooze_until: Option<u64>,
 }
 
 impl Default for Settings {
@@ -161,6 +163,7 @@ impl Default for Settings {
             window_y: 0,
             accounts: Vec::new(),
             active_account: None,
+            snooze_until: None,
         }
     }
 }
@@ -217,10 +220,12 @@ pub enum Event {
         delta: f64,
     },
     /// Title and body come from the web page: untrusted.
+    /// `now` is the current time in Unix seconds, to check Snooze.
     NotificationRequested {
         account_id: String,
         title: String,
         body: String,
+        now: u64,
     },
     NotificationClicked {
         account_id: String,
@@ -245,6 +250,13 @@ pub enum Event {
     StartMinimizedChanged {
         enabled: bool,
     },
+    /// Snooze message notifications for all accounts. `now` is Unix seconds.
+    SnoozeSet {
+        minutes: u64,
+        now: u64,
+    },
+    /// End Snooze early.
+    SnoozeCleared,
     /// A URL the OS handed to the app. Untrusted: the core accepts only
     /// `whatsapp:` and `https://wa.me/` forms.
     DeepLinkOpened {
@@ -343,7 +355,8 @@ impl Core {
                 account_id,
                 title,
                 body,
-            } => self.notify(&account_id, &title, &body),
+                now,
+            } => self.notify(&account_id, &title, &body, now),
             Event::NotificationClicked { account_id } => {
                 let mut effects = self.switch(&account_id);
                 if !effects.is_empty() {
@@ -393,6 +406,14 @@ impl Core {
                 self.saved_effects()
             }
             Event::DeepLinkOpened { url } => self.open_deep_link(&url),
+            Event::SnoozeSet { minutes, now } => {
+                self.settings.snooze_until = Some(now.saturating_add(minutes.saturating_mul(60)));
+                self.saved_effects()
+            }
+            Event::SnoozeCleared => {
+                self.settings.snooze_until = None;
+                self.saved_effects()
+            }
         }
     }
 
@@ -400,12 +421,13 @@ impl Core {
         &self.settings.notification_settings
     }
 
-    fn notify(&self, account_id: &str, title: &str, body: &str) -> Vec<Effect> {
+    fn notify(&self, account_id: &str, title: &str, body: &str, now: u64) -> Vec<Effect> {
         let n = &self.settings.notification_settings;
         let Some(account) = self.settings.accounts.iter().find(|a| a.id == account_id) else {
             return Vec::new();
         };
-        if !n.enabled || !n.show_message_notifications {
+        let snoozed = self.settings.snooze_until.is_some_and(|end| now < end);
+        if !n.enabled || !n.show_message_notifications || snoozed {
             return Vec::new();
         }
         let body = if n.show_sender {
@@ -1203,6 +1225,7 @@ mod tests {
             account_id: id.into(),
             title: title.into(),
             body: body.into(),
+            now: 0,
         })
     }
 
@@ -1352,6 +1375,93 @@ mod tests {
                 account_id: "zz".into()
             })
             .is_empty());
+    }
+
+    // --- Snooze ---
+
+    const HOUR: u64 = 3600;
+
+    fn notify_at(core: &mut Core, now: u64) -> Vec<Effect> {
+        core.handle(Event::NotificationRequested {
+            account_id: "a".into(),
+            title: "Alice".into(),
+            body: "hi".into(),
+            now,
+        })
+    }
+
+    #[test]
+    fn snooze_silences_all_accounts_until_its_end_time() {
+        let mut core = started(TWO);
+        core.handle(Event::SnoozeSet {
+            minutes: 60,
+            now: 1000,
+        });
+        assert!(notify_at(&mut core, 1000).is_empty());
+        assert!(core
+            .handle(Event::NotificationRequested {
+                account_id: "b".into(),
+                title: "Bob".into(),
+                body: "yo".into(),
+                now: 1000 + HOUR - 1,
+            })
+            .is_empty());
+        assert!(!notify_at(&mut core, 1000 + HOUR).is_empty());
+    }
+
+    #[test]
+    fn snooze_survives_save_and_load() {
+        let mut core = started(TWO);
+        let effects = core.handle(Event::SnoozeSet {
+            minutes: 8 * 60,
+            now: 1000,
+        });
+        assert_eq!(saved(&effects)["snooze_until"], 1000 + 8 * HOUR);
+        let mut restarted = started(&saved(&effects).to_string());
+        assert!(notify_at(&mut restarted, 1000 + 8 * HOUR - 1).is_empty());
+        assert!(!notify_at(&mut restarted, 1000 + 8 * HOUR).is_empty());
+    }
+
+    #[test]
+    fn end_snooze_clears_it_and_alerts_come_back() {
+        let mut core = started(TWO);
+        core.handle(Event::SnoozeSet {
+            minutes: 60,
+            now: 1000,
+        });
+        let effects = core.handle(Event::SnoozeCleared);
+        assert!(saved(&effects)["snooze_until"].is_null());
+        assert!(!notify_at(&mut core, 1001).is_empty());
+    }
+
+    #[test]
+    fn snooze_only_saves_and_does_not_touch_the_unread_count() {
+        let mut core = started(TWO);
+        for effects in [
+            core.handle(Event::SnoozeSet {
+                minutes: 60,
+                now: 1000,
+            }),
+            core.handle(Event::SnoozeCleared),
+        ] {
+            assert!(matches!(effects[..], [Effect::SaveSettings { .. }]));
+        }
+    }
+
+    #[test]
+    fn snooze_works_but_is_not_saved_while_save_is_blocked() {
+        let mut core = Core::default();
+        core.handle(Event::SettingsLoaded {
+            raw: Ok(Some("{bad".into())),
+            fresh_id: "a".into(),
+        });
+        let effects = core.handle(Event::SnoozeSet {
+            minutes: 60,
+            now: 1000,
+        });
+        assert!(!has_save(&effects));
+        assert!(notify_at(&mut core, 1000).is_empty());
+        assert!(!has_save(&core.handle(Event::SnoozeCleared)));
     }
 
     #[test]
