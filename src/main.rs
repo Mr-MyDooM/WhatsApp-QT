@@ -491,11 +491,20 @@ pub(crate) fn report_error(app: &AppHandle, friendly: &str, detail: &str) {
     let _ = app.emit_to(SETTINGS_LABEL, "app-error", friendly);
 }
 
-/// Sidebar gets each account's count; tray tooltip and Dock badge get the total.
-fn show_unread(app: &AppHandle, counts: BTreeMap<String, u32>, total: u32) {
-    if let Err(e) = app.emit_to(SIDEBAR_LABEL, "unread", counts) {
-        eprintln!("Could not update unread counts in the sidebar: {e}");
+fn emit_sidebar_view(app: &AppHandle, view: &core::SidebarView) {
+    if let Err(e) = app.emit_to(SIDEBAR_LABEL, "accounts", view) {
+        eprintln!("Could not update sidebar: {e}");
     }
+}
+
+/// Sidebar gets the new view with each account's count; tray tooltip and Dock badge get the total.
+fn show_unread(app: &AppHandle, total: u32) {
+    let view = app
+        .state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .sidebar_view();
+    emit_sidebar_view(app, &view);
     if let Some(window) = app.get_window("main") {
         // `None` removes the badge.
         let badge = (total > 0).then_some(i64::from(total));
@@ -585,24 +594,9 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
             }
             // Handled in `begin_quit`: it must hold the exit until the clear is done.
             Effect::ClearAccountCaches { .. } => {}
-            Effect::RenderSidebar { accounts, active } => {
+            Effect::RenderSidebar { view } => {
                 refresh_account_menus(app);
-                let accounts: Vec<_> = accounts
-                    .iter()
-                    .map(|a| {
-                        serde_json::json!({
-                            "id": a.id,
-                            "name": a.name,
-                            "initials": initials(&a.name),
-                            "hue": avatar_hue(&a.id),
-                            "muted": a.muted,
-                        })
-                    })
-                    .collect();
-                let payload = serde_json::json!({ "accounts": accounts, "active": active });
-                if let Err(e) = app.emit_to(SIDEBAR_LABEL, "accounts", payload) {
-                    eprintln!("Could not update sidebar: {e}");
-                }
+                emit_sidebar_view(app, &view);
             }
             Effect::ShowNotification {
                 account_id,
@@ -678,7 +672,7 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                 sidebar,
             } => apply_layout(app, page_start, sidebar),
             Effect::EmitSidebarState => emit_sidebar_state(app),
-            Effect::ShowUnread { counts, total } => show_unread(app, counts, total),
+            Effect::ShowUnread { total, .. } => show_unread(app, total),
         }
     }
 }
