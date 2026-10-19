@@ -2,7 +2,7 @@
   "identifier": "default",
   "webviews": ["sidebar"],
   "permissions": [
-    "core:default",
+    "core:event:default",
     "allow-sidebar-ready",
     "allow-add-account",
     "allow-switch-account",

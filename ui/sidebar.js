@@ -6,13 +6,6 @@ let active = "";
 // Unread count per account UUID; accounts with none are absent.
 let unread = {};
 
-function confirmRemove(id) {
-  const account = accounts.find((a) => a.id === id);
-  if (!account) return;
-  const ok = confirm(`Remove "${account.name}" and delete its login and data? This cannot be undone.`);
-  if (ok) invoke("remove_account", { id });
-}
-
 function render() {
   const list = document.getElementById("accounts");
   list.replaceChildren(
@@ -32,7 +25,7 @@ function render() {
       el.addEventListener("click", () => invoke("switch_account", { id: a.id }));
       el.addEventListener("contextmenu", (e) => {
         e.preventDefault();
-        confirmRemove(a.id);
+        invoke("remove_account", { id: a.id });
       });
       return el;
     }),
@@ -49,5 +42,4 @@ listen("unread", (e) => {
   unread = e.payload;
   render();
 });
-listen("remove-active", () => confirmRemove(active));
 invoke("sidebar_ready");

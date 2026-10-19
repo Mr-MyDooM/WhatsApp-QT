@@ -102,6 +102,8 @@ pub struct Account {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NotificationSettings {
+    /// Old Qt master switch. Kept only so the old app can still read the file. Ignored here:
+    /// the new UI has no control for it, so only `show_message_notifications` decides.
     pub enabled: bool,
     pub show_message_notifications: bool,
     pub show_call_notifications: bool,
@@ -145,6 +147,8 @@ pub struct Settings {
     pub active_account: Option<String>,
     /// Snooze end time in Unix seconds. `None` means no Snooze.
     pub snooze_until: Option<u64>,
+    /// Removed accounts whose data store is not deleted yet. Retried at each start.
+    pub pending_deletions: Vec<String>,
 }
 
 impl Default for Settings {
@@ -166,6 +170,7 @@ impl Default for Settings {
             accounts: Vec::new(),
             active_account: None,
             snooze_until: None,
+            pending_deletions: Vec::new(),
         }
     }
 }
@@ -229,9 +234,6 @@ pub enum Event {
         body: String,
         now: u64,
     },
-    NotificationClicked {
-        account_id: String,
-    },
     NotificationSettingsChanged {
         messages: bool,
         show_sender: bool,
@@ -275,6 +277,11 @@ pub enum Event {
     /// `whatsapp:` and `https://wa.me/` forms.
     DeepLinkOpened {
         url: String,
+    },
+    /// The shell finished deleting the data of a removed account.
+    AccountDataDeleted {
+        id: String,
+        result: Result<(), String>,
     },
     /// An account webview's page title changed. Untrusted: WhatsApp Web sets it.
     TitleChanged {
@@ -324,7 +331,6 @@ pub enum Effect {
         body: String,
         sound: Sound,
     },
-    FocusWindow,
     SaveSettings {
         json: String,
     },
@@ -352,6 +358,8 @@ pub struct Core {
     /// Set when the settings file exists but could not be read or parsed.
     /// Saving would overwrite the user's file with defaults, so it is skipped.
     save_blocked: bool,
+    /// The message of the last load error, for the settings page.
+    load_error: Option<String>,
     /// Unread count per account UUID; accounts with none are absent. Not saved.
     unread: BTreeMap<String, u32>,
 }
@@ -393,13 +401,6 @@ impl Core {
                 body,
                 now,
             } => self.notify(&account_id, &title, &body, now),
-            Event::NotificationClicked { account_id } => {
-                let mut effects = self.switch(&account_id);
-                if !effects.is_empty() {
-                    effects.push(Effect::FocusWindow);
-                }
-                effects
-            }
             Event::NotificationSettingsChanged {
                 messages,
                 show_sender,
@@ -423,6 +424,10 @@ impl Core {
                 n.show_message_notifications = !n.show_message_notifications;
                 self.saved_effects()
             }
+            // The OS login item must not drift from a settings file we cannot write.
+            Event::AutostartChanged { .. } if self.save_blocked => vec![Effect::ReportError {
+                message: "Cannot change start at login while the settings file is unusable".into(),
+            }],
             Event::AutostartChanged { enabled } => {
                 self.settings.autostart_enabled = enabled;
                 let mut effects = Vec::new();
@@ -474,6 +479,16 @@ impl Core {
             }
             Event::DeepLinkOpened { url } => self.open_deep_link(&url),
             Event::TitleChanged { id, title } => self.set_unread(id, unread_count(&title)),
+            Event::AccountDataDeleted { id, result } => match result {
+                Ok(()) => {
+                    self.settings.pending_deletions.retain(|p| *p != id);
+                    self.saved_effects()
+                }
+                // The id stays listed, so the next start tries again.
+                Err(e) => vec![Effect::ReportError {
+                    message: format!("Could not delete the data of a removed account: {e}"),
+                }],
+            },
             Event::SnoozeSet { minutes, now } => {
                 self.settings.snooze_until = Some(now.saturating_add(minutes.saturating_mul(60)));
                 self.saved_effects()
@@ -483,6 +498,27 @@ impl Core {
                 self.saved_effects()
             }
         }
+    }
+
+    /// Why the settings file was not used, if it was not. Saving is off in that case.
+    pub fn load_error(&self) -> Option<&str> {
+        self.load_error.as_deref()
+    }
+
+    pub fn account_name(&self, id: &str) -> Option<&str> {
+        self.settings
+            .accounts
+            .iter()
+            .find(|a| a.id == id)
+            .map(|a| a.name.as_str())
+    }
+
+    /// The id of the account the user sees now. Always set after load.
+    pub fn active_account_id(&self) -> Option<&str> {
+        self.settings
+            .accounts
+            .get(self.active_index())
+            .map(|a| a.id.as_str())
     }
 
     pub fn notification_settings(&self) -> &NotificationSettings {
@@ -495,7 +531,7 @@ impl Core {
             return Vec::new();
         };
         let snoozed = self.settings.snooze_until.is_some_and(|end| now < end);
-        if !n.enabled || !n.show_message_notifications || snoozed {
+        if !n.show_message_notifications || snoozed {
             return Vec::new();
         }
         let body = if n.show_sender {
@@ -703,6 +739,7 @@ impl Core {
         };
         let was_active = self.settings.active_account.as_deref() == Some(id);
         self.settings.accounts.remove(pos);
+        self.settings.pending_deletions.push(id.to_string());
         let mut effects = vec![
             Effect::CloseAccountWebview { id: id.to_string() },
             Effect::DeleteAccountData { id: id.to_string() },
@@ -739,9 +776,9 @@ impl Core {
         self.settings = match parsed {
             Ok(s) => s.unwrap_or_default(),
             Err(message) => {
-                effects.push(Effect::ReportError {
-                    message: format!("{message}. Using defaults; the file is not changed."),
-                });
+                let message = format!("{message}. Using defaults; the file is not changed.");
+                self.load_error = Some(message.clone());
+                effects.push(Effect::ReportError { message });
                 self.save_blocked = true;
                 Settings::default()
             }
@@ -774,6 +811,12 @@ impl Core {
             changed = true;
         }
 
+        // Before any webview exists, so a leftover store is not in use.
+        effects.extend(
+            s.pending_deletions
+                .iter()
+                .map(|id| Effect::DeleteAccountData { id: id.clone() }),
+        );
         effects.extend(
             s.accounts
                 .iter()
@@ -788,6 +831,11 @@ impl Core {
         }
         effects
     }
+}
+
+/// True for the one origin an account webview may show. Everything else opens in the browser.
+pub fn is_account_origin(url: &url::Url) -> bool {
+    url.scheme() == "https" && url.host_str() == Some("web.whatsapp.com") && url.port().is_none()
 }
 
 /// WhatsApp Web puts the unread count first in the page title: "(3) WhatsApp".
@@ -1389,14 +1437,6 @@ mod tests {
     }
 
     #[test]
-    fn nothing_is_shown_when_the_master_switch_is_off() {
-        let mut core = started(
-            r#"{"accounts":[{"id":"a","name":"A"}],"notification_settings":{"enabled":false}}"#,
-        );
-        assert!(notify(&mut core, "a", "Alice", "hi").is_empty());
-    }
-
-    #[test]
     fn unknown_account_gets_no_notification() {
         let mut core = started(TWO);
         assert!(notify(&mut core, "zz", "Alice", "hi").is_empty());
@@ -1466,27 +1506,6 @@ mod tests {
         assert_eq!(shown(&e).unwrap().2, &Sound::File("/s.wav".into()));
         let e = change(&mut core, true, "");
         assert_eq!(shown(&e).unwrap().2, &Sound::Default);
-    }
-
-    #[test]
-    fn click_focuses_window_and_activates_the_account() {
-        let mut core = started(TWO);
-        let effects = core.handle(Event::NotificationClicked {
-            account_id: "b".into(),
-        });
-        assert!(effects.contains(&Effect::FocusWindow));
-        assert!(effects.contains(&Effect::ShowAccount { id: "b".into() }));
-        assert_eq!(saved(&effects)["active_account"], "b");
-    }
-
-    #[test]
-    fn click_on_a_removed_account_does_nothing() {
-        let mut core = started(TWO);
-        assert!(core
-            .handle(Event::NotificationClicked {
-                account_id: "zz".into()
-            })
-            .is_empty());
     }
 
     // --- Snooze ---
@@ -1903,12 +1922,103 @@ mod tests {
             fresh_id: "u1".into(),
         });
         let effects = core.handle(Event::AutostartChanged { enabled: true });
-        assert_eq!(effects, vec![Effect::SetAutostart { enabled: true }]);
+        assert!(!effects
+            .iter()
+            .any(|e| matches!(e, Effect::SetAutostart { .. })));
         assert!(!has_save(
             &core.handle(Event::AutostartFailed { enabled: false })
         ));
         assert!(!has_save(
             &core.handle(Event::ClearCacheOnExitChanged { enabled: true })
         ));
+    }
+
+    // --- Review fixes ---
+
+    #[test]
+    fn old_master_switch_off_does_not_silence_notifications() {
+        let raw = r#"{"accounts":[{"id":"a","name":"A"}],"active_account":"a","notification_settings":{"enabled":false}}"#;
+        let mut core = started(raw);
+        assert!(shown(&notify(&mut core, "a", "Alice", "hi")).is_some());
+    }
+
+    #[test]
+    fn bad_settings_file_keeps_its_error_and_blocks_autostart() {
+        let mut core = Core::default();
+        core.handle(Event::SettingsLoaded {
+            raw: Ok(Some("{not json".into())),
+            fresh_id: "n".into(),
+        });
+        assert!(core.load_error().is_some());
+        let effects = core.handle(Event::AutostartChanged { enabled: true });
+        assert!(!effects
+            .iter()
+            .any(|e| matches!(e, Effect::SetAutostart { .. })));
+        assert!(matches!(effects[0], Effect::ReportError { .. }));
+    }
+
+    #[test]
+    fn good_settings_file_has_no_load_error() {
+        assert!(started(TWO).load_error().is_none());
+    }
+
+    #[test]
+    fn removed_account_stays_pending_until_its_data_is_deleted() {
+        let mut core = started(TWO);
+        let effects = core.handle(Event::RemoveAccount {
+            id: "b".into(),
+            fresh_id: "n".into(),
+        });
+        assert_eq!(
+            saved(&effects)["pending_deletions"],
+            serde_json::json!(["b"])
+        );
+
+        let failed = core.handle(Event::AccountDataDeleted {
+            id: "b".into(),
+            result: Err("busy".into()),
+        });
+        assert!(matches!(failed[0], Effect::ReportError { .. }));
+        assert!(!has_save(&failed));
+
+        let done = core.handle(Event::AccountDataDeleted {
+            id: "b".into(),
+            result: Ok(()),
+        });
+        assert_eq!(saved(&done)["pending_deletions"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn pending_deletions_are_retried_before_any_webview_is_created() {
+        let raw = r#"{"accounts":[{"id":"a","name":"A"}],"active_account":"a","pending_deletions":["old"]}"#;
+        let effects = load(Some(raw), "unused");
+        let delete = effects
+            .iter()
+            .position(|e| *e == Effect::DeleteAccountData { id: "old".into() })
+            .expect("retry delete");
+        let create = effects
+            .iter()
+            .position(|e| matches!(e, Effect::CreateAccountWebview { .. }))
+            .expect("create webview");
+        assert!(delete < create);
+    }
+
+    #[test]
+    fn account_helpers_name_and_find_the_active_account() {
+        let core = started(TWO);
+        assert_eq!(core.account_name("b"), Some("Account 2"));
+        assert_eq!(core.account_name("zz"), None);
+        assert_eq!(core.active_account_id(), Some("a"));
+    }
+
+    #[test]
+    fn only_https_whatsapp_web_is_an_account_origin() {
+        let ok = |u: &str| is_account_origin(&url::Url::parse(u).unwrap());
+        assert!(ok("https://web.whatsapp.com/"));
+        assert!(ok("https://web.whatsapp.com/send?phone=1"));
+        assert!(!ok("http://web.whatsapp.com/"));
+        assert!(!ok("https://web.whatsapp.com.evil.com/"));
+        assert!(!ok("https://example.com/"));
+        assert!(!ok("https://web.whatsapp.com:8443/"));
     }
 }

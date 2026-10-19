@@ -56,6 +56,10 @@ function load() {
     clearCacheRow.hidden = !s.clear_cache_supported;
     closeToTray.checked = s.close_to_tray;
     startMinimized.checked = s.start_minimized;
+    if (s.load_error) {
+      error.textContent = s.load_error + " Changes are not saved.";
+      error.hidden = false;
+    }
   });
 }
 

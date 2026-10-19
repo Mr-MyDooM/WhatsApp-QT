@@ -2,40 +2,34 @@
 
 use tauri::AppHandle;
 
-use crate::core::{Event, Sound};
-use crate::dispatch;
+use crate::core::Sound;
 
-/// macOS: waits for a click on a worker thread, then reports it to the core.
+/// macOS: shows the notification without waiting for a click.
+///
+/// mac-notification-sys keeps one global click delegate that each send replaces, and a
+/// waiting send blocks its thread forever. So a click cannot be routed to the right
+/// account, and waiting would leak one thread per notification. We do not wait.
 #[cfg(target_os = "macos")]
-pub fn show(app: AppHandle, account_id: String, title: String, body: String, sound: Sound) {
-    use mac_notification_sys::{Notification, NotificationResponse};
+pub fn show(_app: AppHandle, _account_id: String, title: String, body: String, sound: Sound) {
+    use mac_notification_sys::Notification;
 
-    std::thread::spawn(move || {
-        let mut notification = Notification::new();
-        notification
-            .title(&title)
-            .message(&body)
-            .wait_for_click(true);
-        match &sound {
-            Sound::Off => {}
-            Sound::Default => {
-                notification.default_sound();
-            }
-            // A notification can only play system sounds by name, so play the file itself.
-            Sound::File(path) => {
-                if let Err(e) = std::process::Command::new("afplay").arg(path).spawn() {
-                    eprintln!("Could not play notification sound {path}: {e}");
-                }
+    let mut notification = Notification::new();
+    notification.title(&title).message(&body).asynchronous(true);
+    match &sound {
+        Sound::Off => {}
+        Sound::Default => {
+            notification.default_sound();
+        }
+        // A notification can only play system sounds by name, so play the file itself.
+        Sound::File(path) => {
+            if let Err(e) = std::process::Command::new("afplay").arg(path).spawn() {
+                eprintln!("Could not play notification sound {path}: {e}");
             }
         }
-        match notification.send() {
-            Ok(NotificationResponse::Click) => {
-                dispatch(&app, Event::NotificationClicked { account_id })
-            }
-            Ok(_) => {}
-            Err(e) => eprintln!("Could not show notification: {e}"),
-        }
-    });
+    }
+    if let Err(e) = notification.send() {
+        eprintln!("Could not show notification: {e}");
+    }
 }
 
 // ponytail: no click handling and no sound on Linux and Windows, add with their port.

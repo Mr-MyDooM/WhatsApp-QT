@@ -16,8 +16,9 @@ use tauri::{
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_deep_link::DeepLinkExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
-use crate::core::{theme_css, Core, Effect, Event};
+use crate::core::{is_account_origin, theme_css, Core, Effect, Event};
 
 const SIDEBAR_WIDTH: f64 = 60.0;
 const WINDOW_WIDTH: f64 = 1200.0;
@@ -55,8 +56,14 @@ fn account_data_dir(app: &AppHandle, uuid: &uuid::Uuid) -> tauri::Result<PathBuf
         .join(uuid.to_string()))
 }
 
-/// Removes only the disk and memory cache of one account. Cookies, local storage and
-/// IndexedDB stay, so the login survives. Sends `()` once when the clear is done or failed.
+/// Removes only the disk and memory cache of one account. Sends `()` once when the clear is
+/// done or failed.
+///
+/// Allowed data types, and why. Never add a type that holds the session:
+/// - `WKWebsiteDataTypeDiskCache`, `WKWebsiteDataTypeMemoryCache`: HTTP caches. Safe.
+/// - NOT allowed: cookies, local storage, session storage, IndexedDB, service worker
+///   registrations, offline web application cache, WebSQL, file system. WhatsApp Web keeps
+///   the login in IndexedDB and local storage, so removing any of them logs the user out.
 #[cfg(target_os = "macos")]
 fn clear_account_cache(webview: &tauri::Webview, done: std::sync::mpsc::Sender<()>) {
     use block2::RcBlock;
@@ -142,9 +149,16 @@ fn begin_quit(app: &AppHandle, api: Option<&tauri::ExitRequestApi>) {
         let deadline = std::time::Instant::now() + CACHE_CLEAR_TIMEOUT;
         for _ in 0..pending {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
-            if rx.recv_timeout(left).is_err() {
-                eprintln!("Cache clear did not finish in time; quitting anyway");
-                break;
+            match rx.recv_timeout(left) {
+                Ok(()) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    eprintln!("Cache clear did not finish in time; quitting anyway");
+                    break;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    eprintln!("Cache clear sender dropped before it finished; quitting anyway");
+                    break;
+                }
             }
         }
         app.exit(0);
@@ -152,24 +166,60 @@ fn begin_quit(app: &AppHandle, api: Option<&tauri::ExitRequestApi>) {
 }
 
 /// Deletes the account's data store for good. The account webview is already closed.
-fn delete_account_data(app: &AppHandle, id: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let uuid = uuid::Uuid::parse_str(id)?;
+/// Reports the result to the core, which keeps the id listed until the delete worked.
+fn delete_account_data(app: &AppHandle, id: &str) {
+    let uuid = match uuid::Uuid::parse_str(id) {
+        Ok(uuid) => uuid,
+        Err(e) => {
+            let result = Err(format!("bad account id: {e}"));
+            return dispatch(
+                app,
+                Event::AccountDataDeleted {
+                    id: id.to_string(),
+                    result,
+                },
+            );
+        }
+    };
     #[cfg(target_os = "macos")]
     {
         let app = app.clone();
+        let id = id.to_string();
         let bytes = *uuid.as_bytes();
         tauri::async_runtime::spawn(async move {
-            if let Err(e) = app.remove_data_store(bytes).await {
-                eprintln!("Could not remove data store: {e}");
-            }
+            let result = app
+                .remove_data_store(bytes)
+                .await
+                .map_err(|e| e.to_string());
+            dispatch(&app, Event::AccountDataDeleted { id, result });
         });
     }
     #[cfg(not(target_os = "macos"))]
-    match std::fs::remove_dir_all(account_data_dir(app, &uuid)?) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
-        _ => {}
+    {
+        let result = account_data_dir(app, &uuid)
+            .map_err(|e| e.to_string())
+            .and_then(|dir| match std::fs::remove_dir_all(dir) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+                _ => Ok(()),
+            });
+        dispatch(
+            app,
+            Event::AccountDataDeleted {
+                id: id.to_string(),
+                result,
+            },
+        );
     }
-    Ok(())
+}
+
+/// Opens http and https links in the default browser. Other schemes are dropped.
+fn open_in_browser(url: &url::Url) {
+    if !matches!(url.scheme(), "http" | "https") {
+        return;
+    }
+    if let Err(e) = tauri_plugin_opener::open_url(url.as_str(), None::<&str>) {
+        eprintln!("Could not open {url} in the browser: {e}");
+    }
 }
 
 fn add_account_webview(
@@ -183,6 +233,22 @@ fn add_account_webview(
         WebviewUrl::External(ACCOUNT_URL.parse()?),
     )
     .user_agent(USER_AGENT)
+    // Only WhatsApp Web itself loads in the account webview. Links to other sites open
+    // in the default browser.
+    .on_navigation(|url| {
+        if is_account_origin(url) {
+            return true;
+        }
+        open_in_browser(url);
+        false
+    })
+    .on_new_window(|url, _features| {
+        if is_account_origin(&url) {
+            return tauri::webview::NewWindowResponse::Allow;
+        }
+        open_in_browser(&url);
+        tauri::webview::NewWindowResponse::Deny
+    })
     .initialization_script(NOTIFICATION_SCRIPT)
     // The unread count comes from the page title, read here on the Rust side, so the
     // remote page needs no IPC command for it.
@@ -208,6 +274,14 @@ fn add_account_webview(
         LogicalSize::new((size.width - SIDEBAR_WIDTH).max(1.0), size.height),
     )?;
     Ok(())
+}
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
 }
 
 fn show_account(app: &AppHandle, id: &str) {
@@ -294,11 +368,7 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                     }
                 }
             }
-            Effect::DeleteAccountData { id } => {
-                if let Err(e) = delete_account_data(app, &id) {
-                    eprintln!("Could not delete data of account {id}: {e}");
-                }
-            }
+            Effect::DeleteAccountData { id } => delete_account_data(app, &id),
             Effect::ShowAccount { id } => show_account(app, &id),
             Effect::ApplyTheme { theme, css } => {
                 let scheme = match theme.as_str() {
@@ -352,13 +422,6 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                 body,
                 sound,
             } => notify::show(app.clone(), account_id, title, body, sound),
-            Effect::FocusWindow => {
-                if let Some(window) = app.get_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
-                }
-            }
             Effect::SaveSettings { json } => {
                 let Some(path) = settings_path() else {
                     report_error(app, SAVE_FAILED_MESSAGE, "Could not find config directory");
@@ -379,13 +442,7 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
             Effect::ReportError { message } => {
                 report_error(app, "Something went wrong with your settings.", &message)
             }
-            Effect::ShowWindow => {
-                if let Some(window) = app.get_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
-                }
-            }
+            Effect::ShowWindow => show_main_window(app),
             Effect::HideWindow => {
                 if let Some(window) = app.get_window("main") {
                     let _ = window.hide();
@@ -393,11 +450,7 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
             }
             Effect::Quit => begin_quit(app, None),
             Effect::OpenChat { id, url } => {
-                if let Some(window) = app.get_window("main") {
-                    let _ = window.unminimize();
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                show_main_window(app);
                 let Some(webview) = app.get_webview(&account_label(&id)) else {
                     continue;
                 };
@@ -445,16 +498,45 @@ fn switch_account(app: AppHandle, id: String) {
     dispatch(&app, Event::SwitchAccount { id });
 }
 
-/// The sidebar asks the user to confirm before it calls this.
+/// Asks the user in a native dialog, then removes the account. `window.confirm` cannot be
+/// used: WKWebView returns false for it without a UI delegate.
+fn confirm_remove_account(app: &AppHandle, id: String) {
+    let Some(name) = app
+        .state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .account_name(&id)
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let handle = app.clone();
+    app.dialog()
+        .message(format!(
+            "Remove \"{name}\" and delete its login and data? This cannot be undone."
+        ))
+        .title("Remove account")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Remove".into(),
+            "Cancel".into(),
+        ))
+        .show(move |confirmed| {
+            if confirmed {
+                dispatch(
+                    &handle,
+                    Event::RemoveAccount {
+                        id,
+                        fresh_id: new_id(),
+                    },
+                );
+            }
+        });
+}
+
 #[tauri::command]
 fn remove_account(app: AppHandle, id: String) {
-    dispatch(
-        &app,
-        Event::RemoveAccount {
-            id,
-            fresh_id: new_id(),
-        },
-    );
+    confirm_remove_account(&app, id);
 }
 
 fn toggle_window(app: &AppHandle) {
@@ -575,6 +657,8 @@ fn get_settings(core: tauri::State<Mutex<Core>>) -> serde_json::Value {
         "clear_cache_on_exit": core.clear_cache_on_exit(),
         // Only macOS can clear the cache without removing logins.
         "clear_cache_supported": cfg!(target_os = "macos"),
+        // Set when the settings file was unusable: changes are not saved then.
+        "load_error": core.load_error(),
     })
 }
 
@@ -634,6 +718,7 @@ const TRAY_QUIT: &str = "tray-quit";
 const TRAY_SNOOZE_1H: &str = "tray-snooze-1h";
 const TRAY_SNOOZE_8H: &str = "tray-snooze-8h";
 const TRAY_END_SNOOZE: &str = "tray-end-snooze";
+const MENU_QUIT: &str = "app-quit";
 const MENU_SETTINGS: &str = "settings";
 const MENU_ZOOM_IN: &str = "zoom-in";
 const MENU_ZOOM_OUT: &str = "zoom-out";
@@ -659,7 +744,10 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::hide_others(app, None)?,
             &PredefinedMenuItem::show_all(app, None)?,
             &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::quit(app, None)?,
+            // Not the predefined quit: it exits without `begin_quit`, so Cmd+Q would skip the
+            // cache clear. The Dock menu Quit and macOS logout bypass this item too and go
+            // through `RunEvent::ExitRequested`, which calls `begin_quit` as well.
+            &MenuItem::with_id(app, MENU_QUIT, "Quit WhatsApp", true, Some("CmdOrCtrl+Q"))?,
         ],
     )?;
     // Without an Edit menu, Cmd+C, Cmd+V and friends do nothing in the webviews on macOS.
@@ -755,10 +843,16 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 fn on_menu_event(app: &AppHandle, id: &str) {
     match id {
         MENU_ADD => dispatch(app, Event::AddAccount { fresh_id: new_id() }),
-        // The sidebar knows the active account and asks for confirmation.
+        MENU_QUIT => begin_quit(app, None),
         MENU_REMOVE => {
-            if let Err(e) = app.emit_to(SIDEBAR_LABEL, "remove-active", ()) {
-                eprintln!("Could not ask the sidebar to remove the account: {e}");
+            let active = app
+                .state::<Mutex<Core>>()
+                .lock()
+                .expect("core lock")
+                .active_account_id()
+                .map(str::to_string);
+            if let Some(id) = active {
+                confirm_remove_account(app, id);
             }
         }
         MENU_SETTINGS => open_settings(app),
@@ -786,10 +880,15 @@ fn dispatch_deep_links(app: &AppHandle, urls: impl IntoIterator<Item = String>) 
 }
 
 fn main() {
+    env_logger::init();
     tauri::Builder::default()
         // First, so a second copy hands its link to the running one and exits.
         // The `deep-link` feature turns the second copy's argv into an on_open_urls call.
-        .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            // The second copy exits; show this one so the launch has a visible result.
+            show_main_window(app);
+        }))
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -902,8 +1001,12 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building WhatsApp-QT")
         .run(|app, event| {
-            if let tauri::RunEvent::ExitRequested { api, .. } = event {
-                begin_quit(app, Some(&api));
+            match event {
+                tauri::RunEvent::ExitRequested { api, .. } => begin_quit(app, Some(&api)),
+                // Dock click after close-to-tray: the window is hidden, show it again.
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen { .. } => show_main_window(app),
+                _ => {}
             }
         });
 }
