@@ -4,13 +4,21 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::page::{theme_css, PageConfig};
+
 const DEFAULT_ACCOUNT_NAME: &str = "Account 1";
 const MIN_ZOOM: f64 = 0.25;
 const MAX_ZOOM: f64 = 3.0;
-/// Chat list width limits in CSS pixels. Keep equal to the limits in `chat_list_shim.js`.
+/// Chat list width limits in CSS pixels. The page config carries them to `chat_list_shim.js`.
 pub const CHAT_LIST_MIN_WIDTH: f64 = 200.0;
 pub const CHAT_LIST_MAX_WIDTH: f64 = 900.0;
 /// Caps for text from the web page, which is untrusted.
+/// Avatar column. Wider than the macOS traffic lights (about 70 px), so they never reach the
+/// account page. Keep the top strip in `frontend/src/sidebar/Sidebar.tsx` for them.
+pub const SIDEBAR_NARROW: f64 = 72.0;
+const SIDEBAR_WIDE: f64 = 220.0;
+/// Width of the auto-hidden sidebar: the strip at the window edge that shows it on mouse over.
+const SIDEBAR_EDGE: f64 = 6.0;
 const MAX_ACCOUNT_NAME_CHARS: usize = 40;
 /// A page that has not finished loading after this long counts as failed.
 const LOAD_TIMEOUT_SECS: u64 = 30;
@@ -23,82 +31,6 @@ const MAX_DOWNLOAD_PATH_CHARS: usize = 1024;
 const HIDDEN_SENDER_BODY: &str = "New message";
 const TEST_TITLE: &str = "Test";
 const TEST_BODY: &str = "This is a test notification.";
-
-const DARK_BASE_CSS: &str = r#"
-    /* Dark theme base styles */
-    body, #app, [data-testid="conversation-panel-body"] {
-        background-color: #1e1e1e !important;
-        color: #ffffff !important;
-        font-family: 'Fira Code', 'JetBrains Mono', 'monospace' !important;
-    }
-"#;
-const DARK_CHAT_CSS: &str = r#"
-    /* Dark theme chat styles */
-    [data-testid="chat-list"] {
-        background-color: #2d2d2d !important;
-    }
-    [data-testid="chat"] {
-        background-color: #3d3d3d !important;
-        border-bottom: 1px solid #555 !important;
-    }
-"#;
-const LIGHT_BASE_CSS: &str = r#"
-    /* Light theme base styles */
-    body, #app, [data-testid="conversation-panel-body"] {
-        background-color: #ffffff !important;
-        color: #000000 !important;
-        font-family: 'Fira Code', 'JetBrains Mono', 'monospace' !important;
-    }
-"#;
-const LIGHT_CHAT_CSS: &str = r#"
-    /* Light theme chat styles */
-    [data-testid="chat-list"] {
-        background-color: #f8f9fa !important;
-    }
-    [data-testid="chat"] {
-        background-color: #ffffff !important;
-        border-bottom: 1px solid #e9ecef !important;
-    }
-"#;
-
-/// CSS to inject into account webviews. "system" and unknown names inject nothing.
-pub fn theme_css(theme: &str) -> String {
-    let mut css = String::new();
-    if theme == "dark" {
-        css.push_str(DARK_BASE_CSS);
-        css.push_str(DARK_CHAT_CSS);
-        css.push_str(
-            r#"
-                /* Additional dark theme styles */
-                ._3OtEr, .app, #app, .app-wrapper-web, [data-testid="app-wrapper"] {
-                    background-color: #1e1e1e !important;
-                }
-                ._3j7s9 {
-                    background-color: #2d2d2d !important;
-                }
-                /* WhatsApp specific dark theme */
-                [data-testid="chatlist-header"], [data-testid="chat-header"] {
-                    background-color: #2d2d2d !important;
-                }
-            "#,
-        );
-    } else if theme == "light" {
-        css.push_str(LIGHT_BASE_CSS);
-        css.push_str(LIGHT_CHAT_CSS);
-        css.push_str(
-            r#"
-                /* Additional light theme styles */
-                ._3OtEr, .app, #app, .app-wrapper-web, [data-testid="app-wrapper"] {
-                    background-color: #ffffff !important;
-                }
-                ._3j7s9 {
-                    background-color: #f8f9fa !important;
-                }
-            "#,
-        );
-    }
-    css
-}
 
 fn is_known_theme(theme: &str) -> bool {
     matches!(theme, "light" | "dark" | "system")
@@ -355,6 +287,10 @@ pub enum Event {
     SidebarAutoHideChanged {
         enabled: bool,
     },
+    /// The mouse entered or left the auto-hidden sidebar. Ignored unless auto-hide is on.
+    SidebarRevealed {
+        shown: bool,
+    },
     /// The user dragged the edge of the chat list in an account page. `None` resets it.
     /// The value comes from the remote page, so it is checked here.
     ChatListResized {
@@ -422,12 +358,23 @@ pub enum Event {
     },
 }
 
+/// Which account pages get a page config.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PageTarget {
+    All,
+    Account(String),
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Effect {
     CreateAccountWebview {
         id: String,
     },
     CloseAccountWebview {
+        id: String,
+    },
+    /// Remove the account's stored profile picture and tell the sidebar.
+    RemoveAvatar {
         id: String,
     },
     /// Delete the account's data store for good.
@@ -437,13 +384,14 @@ pub enum Effect {
     ShowAccount {
         id: String,
     },
-    /// `theme` is "light", "dark" or "system"; empty `css` removes any injected theme.
-    ApplyTheme {
+    /// Set the main window color scheme. `theme` is "light", "dark" or "system".
+    SetWindowScheme {
         theme: String,
-        css: String,
     },
-    ApplyZoom {
-        factor: f64,
+    /// Send the page config to the targeted account pages: native zoom and one script run each.
+    ApplyPageConfig {
+        target: PageTarget,
+        config: PageConfig,
     },
     /// Idempotent. If the system refuses, the shell sends `Event::AutostartFailed`.
     SetAutostart {
@@ -453,8 +401,14 @@ pub enum Effect {
     ClearAccountCaches {
         ids: Vec<String>,
     },
-    /// The sidebar width changed: lay out the webviews and tell the sidebar page.
-    ApplySidebar,
+    /// Where the account pages start and how wide the sidebar webview is. An auto-hidden
+    /// sidebar shows over the page, so the page starts at the edge strip.
+    Layout {
+        page_start: f64,
+        sidebar: f64,
+    },
+    /// Tell the sidebar page which width mode it is in.
+    EmitSidebarState,
     RenderSidebar {
         accounts: Vec<Account>,
         active: String,
@@ -535,6 +489,8 @@ pub struct Core {
     load_error: Option<String>,
     /// Unread count per account UUID; accounts with none are absent. Not saved.
     unread: BTreeMap<String, u32>,
+    /// True while the auto-hidden sidebar shows over the page. Not saved.
+    sidebar_revealed: bool,
 }
 
 impl Core {
@@ -679,15 +635,24 @@ impl Core {
                     (false, false) => (true, false),
                     (true, false) => (false, true),
                 };
-                let mut effects = vec![Effect::ApplySidebar];
+                self.sidebar_revealed = false;
+                let mut effects = vec![self.layout_effect(), Effect::EmitSidebarState];
                 self.save(&mut effects);
                 effects
             }
             Event::SidebarAutoHideChanged { enabled } => {
                 self.settings.sidebar_auto_hide = enabled;
-                let mut effects = vec![Effect::ApplySidebar];
+                self.sidebar_revealed = false;
+                let mut effects = vec![self.layout_effect(), Effect::EmitSidebarState];
                 self.save(&mut effects);
                 effects
+            }
+            Event::SidebarRevealed { shown } => {
+                if !self.settings.sidebar_auto_hide {
+                    return Vec::new();
+                }
+                self.sidebar_revealed = shown;
+                vec![self.layout_effect()]
             }
             Event::ChatListResized { width } => {
                 if width.is_some_and(|w| !w.is_finite()) {
@@ -695,7 +660,7 @@ impl Core {
                 }
                 self.settings.chat_list_width =
                     width.map(|w| w.clamp(CHAT_LIST_MIN_WIDTH, CHAT_LIST_MAX_WIDTH));
-                let mut effects = Vec::new();
+                let mut effects = vec![self.apply_page_config(PageTarget::All)];
                 self.save(&mut effects);
                 effects
             }
@@ -715,7 +680,9 @@ impl Core {
             }
             Event::SpellcheckChanged { enabled } => {
                 self.settings.spellcheck_enabled = enabled;
-                self.saved_effects()
+                let mut effects = vec![self.apply_page_config(PageTarget::All)];
+                self.save(&mut effects);
+                effects
             }
             Event::DeepLinkOpened { url } => self.open_deep_link(&url),
             Event::TitleChanged { id, title } => self.set_unread(id, unread_count(&title)),
@@ -862,12 +829,26 @@ impl Core {
         self.settings.autostart_enabled
     }
 
-    pub fn theme(&self) -> &str {
-        &self.settings.theme
+    /// Where the page starts and how wide the sidebar webview is.
+    pub fn layout(&self) -> (f64, f64) {
+        let full = if self.settings.sidebar_wide {
+            SIDEBAR_WIDE
+        } else {
+            SIDEBAR_NARROW
+        };
+        match (self.settings.sidebar_auto_hide, self.sidebar_revealed) {
+            (false, _) => (full, full),
+            (true, true) => (SIDEBAR_EDGE, full),
+            (true, false) => (SIDEBAR_EDGE, SIDEBAR_EDGE),
+        }
     }
 
-    pub fn zoom_factor(&self) -> f64 {
-        self.settings.zoom_factor
+    fn layout_effect(&self) -> Effect {
+        let (page_start, sidebar) = self.layout();
+        Effect::Layout {
+            page_start,
+            sidebar,
+        }
     }
 
     pub fn sidebar_wide(&self) -> bool {
@@ -878,6 +859,7 @@ impl Core {
         self.settings.sidebar_auto_hide
     }
 
+    #[cfg(test)]
     pub fn chat_list_width(&self) -> Option<f64> {
         self.settings.chat_list_width
     }
@@ -885,10 +867,6 @@ impl Core {
     /// Empty means the system Downloads folder.
     pub fn download_path(&self) -> &str {
         &self.settings.download_path
-    }
-
-    pub fn spellcheck_enabled(&self) -> bool {
-        self.settings.spellcheck_enabled
     }
 
     /// The main window is built hidden; show it unless the user wants to start in the tray.
@@ -909,14 +887,30 @@ impl Core {
     /// Effects that bring the webviews in line with the current settings.
     pub fn appearance_effects(&self) -> Vec<Effect> {
         vec![
-            Effect::ApplyTheme {
+            Effect::SetWindowScheme {
                 theme: self.settings.theme.clone(),
-                css: theme_css(&self.settings.theme),
             },
-            Effect::ApplyZoom {
-                factor: self.settings.zoom_factor,
-            },
+            self.apply_page_config(PageTarget::All),
         ]
+    }
+
+    /// Every setting that changes the account page.
+    pub fn page_config(&self) -> PageConfig {
+        PageConfig {
+            theme_css: theme_css(&self.settings.theme),
+            zoom: self.settings.zoom_factor,
+            spellcheck: self.settings.spellcheck_enabled,
+            chat_list_width: self.settings.chat_list_width,
+            chat_list_min: CHAT_LIST_MIN_WIDTH,
+            chat_list_max: CHAT_LIST_MAX_WIDTH,
+        }
+    }
+
+    fn apply_page_config(&self, target: PageTarget) -> Effect {
+        Effect::ApplyPageConfig {
+            target,
+            config: self.page_config(),
+        }
     }
 
     fn set_theme(&mut self, theme: String) -> Vec<Effect> {
@@ -926,8 +920,10 @@ impl Core {
             }];
         }
         self.settings.theme = theme.clone();
-        let css = theme_css(&theme);
-        let mut effects = vec![Effect::ApplyTheme { theme, css }];
+        let mut effects = vec![
+            Effect::SetWindowScheme { theme },
+            self.apply_page_config(PageTarget::All),
+        ];
         self.save(&mut effects);
         effects
     }
@@ -941,7 +937,7 @@ impl Core {
         // Round to 2 decimals so repeated 0.1 steps do not drift (1.2000000000000002).
         let factor = ((factor * 100.0).round() / 100.0).clamp(MIN_ZOOM, MAX_ZOOM);
         self.settings.zoom_factor = factor;
-        let mut effects = vec![Effect::ApplyZoom { factor }];
+        let mut effects = vec![self.apply_page_config(PageTarget::All)];
         self.save(&mut effects);
         effects
     }
@@ -1094,17 +1090,18 @@ impl Core {
     }
 
     fn page_loaded(&mut self, id: &str) -> Vec<Effect> {
+        let page = self.apply_page_config(PageTarget::Account(id.to_string()));
         let Some(load) = self.loads.get_mut(id) else {
-            return Vec::new();
+            return vec![page];
         };
         let was_failed = load.status == LoadStatus::Failed;
         load.status = LoadStatus::Loaded;
         load.failures = 0;
+        let mut effects = vec![page];
         if was_failed {
-            vec![Effect::HideLoadError { id: id.to_string() }]
-        } else {
-            Vec::new()
+            effects.push(Effect::HideLoadError { id: id.to_string() });
         }
+        effects
     }
 
     fn load_check_due(&mut self, id: String, attempt: u64) -> Vec<Effect> {
@@ -1132,6 +1129,7 @@ impl Core {
         self.settings.pending_deletions.push(id.to_string());
         let mut effects = vec![
             Effect::CloseAccountWebview { id: id.to_string() },
+            Effect::RemoveAvatar { id: id.to_string() },
             Effect::DeleteAccountData { id: id.to_string() },
         ];
         if self.settings.accounts.is_empty() {
@@ -1389,6 +1387,75 @@ mod tests {
         assert!(out.get("tabs").is_none() && out.get("current_tab").is_none());
     }
 
+    fn layout_of(effects: &[Effect]) -> (f64, f64) {
+        match effects.first() {
+            Some(Effect::Layout {
+                page_start,
+                sidebar,
+            }) => (*page_start, *sidebar),
+            other => panic!("expected Layout first, got {other:?}"),
+        }
+    }
+
+    fn core_with_sidebar(wide: bool, auto_hide: bool) -> Core {
+        let mut core = Core::default();
+        core.handle(Event::SettingsLoaded {
+            raw: Ok(Some(format!(
+                r#"{{"sidebar_wide": {wide}, "sidebar_auto_hide": {auto_hide}}}"#
+            ))),
+            fresh_id: "u1".into(),
+        });
+        core
+    }
+
+    #[test]
+    fn layout_is_the_avatar_column_in_narrow_mode() {
+        let mut core = core_with_sidebar(true, false);
+        let effects = core.handle(Event::SidebarToggled);
+        // wide -> auto-hide; go back around to narrow
+        assert_eq!(layout_of(&effects), (6.0, 6.0));
+        let effects = core.handle(Event::SidebarToggled);
+        assert_eq!(layout_of(&effects), (72.0, 72.0));
+        assert_eq!(core.layout(), (72.0, 72.0));
+    }
+
+    #[test]
+    fn layout_is_wide_in_wide_mode() {
+        let mut core = core_with_sidebar(false, false);
+        let effects = core.handle(Event::SidebarToggled);
+        assert_eq!(layout_of(&effects), (220.0, 220.0));
+        assert_eq!(core.layout(), (220.0, 220.0));
+    }
+
+    #[test]
+    fn auto_hide_layout_follows_the_reveal_state() {
+        let mut core = core_with_sidebar(true, false);
+        let effects = core.handle(Event::SidebarAutoHideChanged { enabled: true });
+        assert_eq!(layout_of(&effects), (6.0, 6.0));
+        let effects = core.handle(Event::SidebarRevealed { shown: true });
+        assert_eq!(layout_of(&effects), (6.0, 220.0));
+        assert_eq!(core.layout(), (6.0, 220.0));
+        let effects = core.handle(Event::SidebarRevealed { shown: false });
+        assert_eq!(layout_of(&effects), (6.0, 6.0));
+    }
+
+    #[test]
+    fn reveal_is_ignored_unless_auto_hide_is_on() {
+        let mut core = core_with_sidebar(false, false);
+        assert!(core
+            .handle(Event::SidebarRevealed { shown: true })
+            .is_empty());
+        assert_eq!(core.layout(), (72.0, 72.0));
+    }
+
+    #[test]
+    fn a_width_change_hides_a_revealed_sidebar() {
+        let mut core = core_with_sidebar(false, true);
+        core.handle(Event::SidebarRevealed { shown: true });
+        let effects = core.handle(Event::SidebarAutoHideChanged { enabled: true });
+        assert_eq!(layout_of(&effects), (6.0, 6.0));
+    }
+
     #[test]
     fn sidebar_toggle_goes_narrow_wide_auto_hide_narrow_and_saves() {
         let mut core = Core::default();
@@ -1399,7 +1466,7 @@ mod tests {
         assert!(!core.sidebar_wide() && !core.sidebar_auto_hide());
         let effects = core.handle(Event::SidebarToggled);
         assert!(core.sidebar_wide() && !core.sidebar_auto_hide());
-        assert_eq!(effects[0], Effect::ApplySidebar);
+        assert_eq!(effects[1], Effect::EmitSidebarState);
         assert_eq!(saved(&effects)["sidebar_wide"], true);
         let effects = core.handle(Event::SidebarToggled);
         assert!(!core.sidebar_wide() && core.sidebar_auto_hide());
@@ -1418,7 +1485,7 @@ mod tests {
         });
         let effects = core.handle(Event::SidebarAutoHideChanged { enabled: true });
         assert!(core.sidebar_wide() && core.sidebar_auto_hide());
-        assert_eq!(effects[0], Effect::ApplySidebar);
+        assert_eq!(effects[1], Effect::EmitSidebarState);
         assert_eq!(saved(&effects)["sidebar_auto_hide"], true);
         // The button pins an auto-hidden sidebar as the avatar column.
         core.handle(Event::SidebarToggled);
@@ -1432,6 +1499,10 @@ mod tests {
             width: Some(10_000.0),
         });
         assert_eq!(core.chat_list_width(), Some(CHAT_LIST_MAX_WIDTH));
+        let config = page_config_of(&effects);
+        assert_eq!(config.chat_list_width, Some(CHAT_LIST_MAX_WIDTH));
+        assert_eq!(config.chat_list_min, CHAT_LIST_MIN_WIDTH);
+        assert_eq!(config.chat_list_max, CHAT_LIST_MAX_WIDTH);
         assert_eq!(saved(&effects)["chat_list_width"], CHAT_LIST_MAX_WIDTH);
         core.handle(Event::ChatListResized { width: Some(1.0) });
         assert_eq!(core.chat_list_width(), Some(CHAT_LIST_MIN_WIDTH));
@@ -1445,6 +1516,15 @@ mod tests {
         let effects = core.handle(Event::ChatListResized { width: None });
         assert_eq!(core.chat_list_width(), None);
         assert!(saved(&effects)["chat_list_width"].is_null());
+    }
+
+    #[test]
+    fn page_load_sends_the_config_to_that_account_only() {
+        let mut core = started(TWO);
+        core.handle(Event::ZoomChanged { factor: 1.4 });
+        let effects = core.handle(Event::PageLoaded { id: "a".into() });
+        assert!(matches!(&effects[0], Effect::ApplyPageConfig {
+            target: PageTarget::Account(id), config } if id == "a" && config.zoom == 1.4));
     }
 
     #[test]
@@ -1680,6 +1760,16 @@ mod tests {
     }
 
     #[test]
+    fn remove_clears_the_avatar_of_the_removed_account() {
+        let mut core = started(TWO);
+        let effects = core.handle(Event::RemoveAccount {
+            id: "b".into(),
+            fresh_id: "n".into(),
+        });
+        assert!(effects.contains(&Effect::RemoveAvatar { id: "b".into() }));
+    }
+
+    #[test]
     fn remove_inactive_deletes_its_store_and_keeps_active() {
         let mut core = started(TWO);
         let effects = core.handle(Event::RemoveAccount {
@@ -1847,40 +1937,38 @@ mod tests {
         })
     }
 
-    fn zoom(core: &mut Core, factor: f64) -> Vec<Effect> {
-        core.handle(Event::ZoomChanged { factor })
+    /// The config of the one `ApplyPageConfig` that targets every account.
+    fn page_config_of(effects: &[Effect]) -> PageConfig {
+        let mut found = effects.iter().filter_map(|e| match e {
+            Effect::ApplyPageConfig {
+                target: PageTarget::All,
+                config,
+            } => Some(config.clone()),
+            _ => None,
+        });
+        let config = found.next().expect("ApplyPageConfig for all accounts");
+        assert!(found.next().is_none(), "one ApplyPageConfig only");
+        config
     }
 
-    #[test]
-    fn theme_css_covers_each_theme() {
-        let dark = theme_css("dark");
-        assert!(dark.contains("#1e1e1e"), "dark theme must set its base bg");
-        assert!(
-            dark.contains("chatlist-header"),
-            "dark adds WhatsApp overrides"
-        );
-
-        let light = theme_css("light");
-        assert!(
-            light.contains("#ffffff"),
-            "light theme must set its base bg"
-        );
-        assert!(
-            !light.contains("#1e1e1e"),
-            "light must not leak dark colors"
-        );
-
-        // "system" (and anything unrecognised) means "inject nothing".
-        assert!(theme_css("system").is_empty());
-        assert!(theme_css("").is_empty());
+    fn zoom(core: &mut Core, factor: f64) -> Vec<Effect> {
+        core.handle(Event::ZoomChanged { factor })
     }
 
     #[test]
     fn theme_change_applies_and_saves() {
         let mut core = loaded_core();
         let effects = theme(&mut core, "dark");
-        assert!(matches!(&effects[0], Effect::ApplyTheme { theme, css }
-            if theme == "dark" && css.contains("#1e1e1e")));
+        assert_eq!(
+            effects[0],
+            Effect::SetWindowScheme {
+                theme: "dark".into()
+            }
+        );
+        assert!(
+            matches!(&effects[1], Effect::ApplyPageConfig { target: PageTarget::All, config }
+            if config.theme_css.contains("#1e1e1e"))
+        );
         assert_eq!(saved(&effects)["theme"], "dark");
     }
 
@@ -1888,13 +1976,8 @@ mod tests {
     fn system_theme_applies_empty_css() {
         let mut core = loaded_core();
         theme(&mut core, "dark");
-        assert_eq!(
-            theme(&mut core, "system")[0],
-            Effect::ApplyTheme {
-                theme: "system".into(),
-                css: String::new()
-            }
-        );
+        assert!(matches!(&theme(&mut core, "system")[1],
+            Effect::ApplyPageConfig { config, .. } if config.theme_css.is_empty()));
     }
 
     #[test]
@@ -1902,22 +1985,22 @@ mod tests {
         let mut core = loaded_core();
         let effects = theme(&mut core, "neon");
         assert!(matches!(effects[..], [Effect::ReportError { .. }]));
-        assert_eq!(core.theme(), "system");
+        assert_eq!(core.settings_view(0).theme, "system");
     }
 
     #[test]
     fn zoom_change_applies_and_saves() {
         let mut core = loaded_core();
         let effects = zoom(&mut core, 1.5);
-        assert_eq!(effects[0], Effect::ApplyZoom { factor: 1.5 });
+        assert_eq!(page_config_of(&effects).zoom, 1.5);
         assert_eq!(saved(&effects)["zoom_factor"], 1.5);
     }
 
     #[test]
     fn zoom_is_clamped() {
         let mut core = loaded_core();
-        assert_eq!(zoom(&mut core, 9.0)[0], Effect::ApplyZoom { factor: 3.0 });
-        assert_eq!(zoom(&mut core, 0.0)[0], Effect::ApplyZoom { factor: 0.25 });
+        assert_eq!(page_config_of(&zoom(&mut core, 9.0)).zoom, 3.0);
+        assert_eq!(page_config_of(&zoom(&mut core, 0.0)).zoom, 0.25);
     }
 
     #[test]
@@ -1925,7 +2008,7 @@ mod tests {
         let mut core = loaded_core();
         let effects = zoom(&mut core, f64::NAN);
         assert!(matches!(effects[..], [Effect::ReportError { .. }]));
-        assert_eq!(core.zoom_factor(), 1.0);
+        assert_eq!(core.settings_view(0).zoom_factor, 1.0);
     }
 
     #[test]
@@ -1934,9 +2017,9 @@ mod tests {
         for _ in 0..3 {
             core.handle(Event::ZoomStepped { delta: 0.1 });
         }
-        assert_eq!(core.zoom_factor(), 1.3);
+        assert_eq!(core.settings_view(0).zoom_factor, 1.3);
         core.handle(Event::ZoomStepped { delta: -0.1 });
-        assert_eq!(core.zoom_factor(), 1.2);
+        assert_eq!(core.settings_view(0).zoom_factor, 1.2);
     }
 
     #[test]
@@ -1947,7 +2030,7 @@ mod tests {
             fresh_id: "u1".into(),
         });
         let effects = theme(&mut core, "dark");
-        assert!(matches!(effects[0], Effect::ApplyTheme { .. }));
+        assert!(matches!(effects[0], Effect::SetWindowScheme { .. }));
         assert!(!has_save(&effects));
         assert!(!has_save(&zoom(&mut core, 2.0)));
     }
@@ -1966,8 +2049,13 @@ mod tests {
             fresh_id: "u1".into(),
         });
         let effects = core.appearance_effects();
-        assert!(matches!(&effects[0], Effect::ApplyTheme { theme, .. } if theme == "light"));
-        assert_eq!(effects[1], Effect::ApplyZoom { factor: 1.2 });
+        assert_eq!(
+            effects[0],
+            Effect::SetWindowScheme {
+                theme: "light".into()
+            }
+        );
+        assert_eq!(page_config_of(&effects).zoom, 1.2);
     }
 
     // --- message notifications ---
@@ -2328,9 +2416,11 @@ mod tests {
     #[test]
     fn spellcheck_change_is_saved() {
         let mut core = started(TWO);
-        let out = saved(&core.handle(Event::SpellcheckChanged { enabled: false }));
+        let effects = core.handle(Event::SpellcheckChanged { enabled: false });
+        assert!(!page_config_of(&effects).spellcheck);
+        let out = saved(&effects);
         assert_eq!(out["spellcheck_enabled"], false);
-        assert!(!core.spellcheck_enabled());
+        assert!(!core.settings_view(0).spellcheck_enabled);
     }
 
     #[test]
@@ -2947,7 +3037,7 @@ mod tests {
         };
         let attempt = *attempt;
         let effects = core.handle(Event::PageLoaded { id: "a".into() });
-        assert_eq!(effects, [Effect::HideLoadError { id: "a".into() }]);
+        assert!(effects.contains(&Effect::HideLoadError { id: "a".into() }));
         assert!(core
             .handle(Event::RetryDue {
                 id: "a".into(),

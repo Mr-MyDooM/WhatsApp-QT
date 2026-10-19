@@ -3,6 +3,7 @@ mod core;
 #[cfg(target_os = "macos")]
 mod dock;
 mod notify;
+mod page;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -23,18 +24,10 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use crate::avatar::Avatars;
 use crate::core::{
-    avatar_hue, initials, is_account_origin, is_page_local_url, is_whatsapp_frame_origin,
-    theme_css, Core, Effect, Event, MenuAccount, NotificationBlock,
+    avatar_hue, initials, is_account_origin, is_page_local_url, is_whatsapp_frame_origin, Core,
+    Effect, Event, MenuAccount, NotificationBlock, PageTarget, SIDEBAR_NARROW,
 };
 
-/// Avatar column. Wider than the macOS traffic lights (about 70 px), so they never reach the
-/// account page. Keep the top strip in `frontend/src/sidebar/Sidebar.tsx` for them.
-const SIDEBAR_NARROW: f64 = 72.0;
-const SIDEBAR_WIDE: f64 = 220.0;
-/// Width of the auto-hidden sidebar: the strip at the window edge that shows it on mouse over.
-const SIDEBAR_EDGE: f64 = 6.0;
-/// True while the auto-hidden sidebar shows over the page. Not saved.
-static SIDEBAR_SHOWN: AtomicBool = AtomicBool::new(false);
 const WINDOW_WIDTH: f64 = 1200.0;
 const WINDOW_HEIGHT: f64 = 800.0;
 const ACCOUNT_URL: &str = "https://web.whatsapp.com";
@@ -61,6 +54,8 @@ const AVATAR_SCRIPT: &str = include_str!("avatar_shim.js");
 const CHAT_LIST_SCRIPT: &str = include_str!("chat_list_shim.js");
 /// Turns spellcheck off in WhatsApp's text boxes when the setting is off.
 const SPELLCHECK_SCRIPT: &str = include_str!("spellcheck_shim.js");
+/// Shows the theme CSS from the page config.
+const THEME_SCRIPT: &str = include_str!("theme_shim.js");
 /// Longest wait for the cache clear at quit. The app exits after this even if WebKit is slow.
 const CACHE_CLEAR_TIMEOUT: Duration = Duration::from_secs(3);
 const AUTOSTART_FAILED_MESSAGE: &str = "Could not change start at login. The setting is unchanged.";
@@ -121,7 +116,7 @@ fn show_load_error(app: &AppHandle, id: &str) {
         (Ok(size), Ok(scale)) => size.to_logical::<f64>(scale),
         _ => return,
     };
-    let (position, size) = content_bounds(sidebar_widths(app).0, size);
+    let (position, size) = content_bounds(page_start(app), size);
     let result = window.add_child(
         WebviewBuilder::new(label, WebviewUrl::App("error.html".into())),
         position,
@@ -334,13 +329,11 @@ fn add_account_webview(
     id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let uuid = uuid::Uuid::parse_str(id)?;
-    let chat_list_script = format!(
-        "window.__PAIRLINE_CHAT_LIST_WIDTH__ = {};\n{CHAT_LIST_SCRIPT}",
-        serde_json::json!(chat_list_width(app))
-    );
-    let spellcheck_script = format!(
-        "window.__PAIRLINE_SPELLCHECK__ = {};\n{SPELLCHECK_SCRIPT}",
-        spellcheck_enabled(app)
+    let page_script = page::init_script(
+        &app.state::<Mutex<Core>>()
+            .lock()
+            .expect("core lock")
+            .page_config(),
     );
     let builder = WebviewBuilder::new(
         account_label(id),
@@ -364,10 +357,12 @@ fn add_account_webview(
         open_in_browser(&url);
         tauri::webview::NewWindowResponse::Deny
     })
+    .initialization_script(&page_script)
     .initialization_script(NOTIFICATION_SCRIPT)
     .initialization_script(AVATAR_SCRIPT)
-    .initialization_script(&chat_list_script)
-    .initialization_script(&spellcheck_script)
+    .initialization_script(THEME_SCRIPT)
+    .initialization_script(CHAT_LIST_SCRIPT)
+    .initialization_script(SPELLCHECK_SCRIPT)
     .on_download(|webview, event| {
         if let tauri::webview::DownloadEvent::Requested { destination, .. } = event {
             let dir = download_path(webview.app_handle());
@@ -393,7 +388,7 @@ fn add_account_webview(
     let size = window
         .inner_size()?
         .to_logical::<f64>(window.scale_factor()?);
-    let (position, size) = content_bounds(sidebar_widths(app).0, size);
+    let (position, size) = content_bounds(page_start(app), size);
     window.add_child(builder, position, size)?;
     Ok(())
 }
@@ -434,29 +429,22 @@ fn show_account(app: &AppHandle, id: &str) {
     }
 }
 
-/// Returns where the page starts and how wide the sidebar webview is. An auto-hidden sidebar
-/// shows over the page, so the page starts at the edge strip.
-fn sidebar_widths(app: &AppHandle) -> (f64, f64) {
-    let core = app.state::<Mutex<Core>>();
-    let core = core.lock().expect("core lock");
-    let full = if core.sidebar_wide() {
-        SIDEBAR_WIDE
-    } else {
-        SIDEBAR_NARROW
-    };
-    if !core.sidebar_auto_hide() {
-        return (full, full);
-    }
-    if SIDEBAR_SHOWN.load(Ordering::Relaxed) {
-        (SIDEBAR_EDGE, full)
-    } else {
-        (SIDEBAR_EDGE, SIDEBAR_EDGE)
-    }
+fn page_start(app: &AppHandle) -> f64 {
+    app.state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .layout()
+        .0
 }
 
-fn layout(app: &AppHandle, window: &tauri::Window, size: tauri::PhysicalSize<u32>) {
+fn layout(
+    app: &AppHandle,
+    window: &tauri::Window,
+    size: tauri::PhysicalSize<u32>,
+    left: f64,
+    sidebar: f64,
+) {
     let size = size.to_logical::<f64>(window.scale_factor().unwrap_or(1.0));
-    let (left, sidebar) = sidebar_widths(app);
     for (label, webview) in app.webviews() {
         if label == SIDEBAR_LABEL {
             let _ = webview.set_size(LogicalSize::new(sidebar, size.height));
@@ -489,30 +477,18 @@ fn emit_sidebar_state(app: &AppHandle) {
     }
 }
 
-fn apply_sidebar(app: &AppHandle) {
-    SIDEBAR_SHOWN.store(false, Ordering::Relaxed);
+fn apply_layout(app: &AppHandle, page_start: f64, sidebar: f64) {
     if let Some(window) = app.get_window("main") {
         if let Ok(size) = window.inner_size() {
-            layout(app, &window, size);
+            layout(app, &window, size, page_start, sidebar);
         }
     }
-    emit_sidebar_state(app);
 }
 
 /// Logs the detail, and shows the friendly message on the settings page if it is open.
 pub(crate) fn report_error(app: &AppHandle, friendly: &str, detail: &str) {
     eprintln!("{detail}");
     let _ = app.emit_to(SETTINGS_LABEL, "app-error", friendly);
-}
-
-/// Empty `css` removes the injected theme.
-fn inject_css(webview: &tauri::Webview, css: &str) {
-    let literal = serde_json::to_string(css).expect("string serializes");
-    let _ = webview.eval(format!(
-        "(function(){{var e=document.getElementById('app-theme-style');if(e)e.remove();\
-         var c={literal};if(!c)return;var s=document.createElement('style');\
-         s.id='app-theme-style';s.textContent=c;document.head.appendChild(s);}})();"
-    ));
 }
 
 /// Sidebar gets each account's count; tray tooltip and Dock badge get the total.
@@ -557,16 +533,16 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                     }
                 }
             }
-            Effect::DeleteAccountData { id } => {
+            Effect::RemoveAvatar { id } => {
                 app.state::<Mutex<Avatars>>()
                     .lock()
                     .expect("avatars lock")
                     .remove(&id);
                 emit_avatars(app);
-                delete_account_data(app, &id)
             }
+            Effect::DeleteAccountData { id } => delete_account_data(app, &id),
             Effect::ShowAccount { id } => show_account(app, &id),
-            Effect::ApplyTheme { theme, css } => {
+            Effect::SetWindowScheme { theme } => {
                 let scheme = match theme.as_str() {
                     "dark" => Some(Theme::Dark),
                     "light" => Some(Theme::Light),
@@ -575,16 +551,19 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                 if let Some(window) = app.get_window("main") {
                     let _ = window.set_theme(scheme);
                 }
-                for (label, webview) in app.webviews() {
-                    if label.starts_with(ACCOUNT_LABEL_PREFIX) {
-                        inject_css(&webview, &css);
-                    }
-                }
             }
-            Effect::ApplyZoom { factor } => {
+            Effect::ApplyPageConfig { target, config } => {
+                let js = page::apply_script(&config);
                 for (label, webview) in app.webviews() {
-                    if label.starts_with(ACCOUNT_LABEL_PREFIX) {
-                        let _ = webview.set_zoom(factor);
+                    let Some(id) = label.strip_prefix(ACCOUNT_LABEL_PREFIX) else {
+                        continue;
+                    };
+                    if matches!(&target, PageTarget::Account(only) if only != id) {
+                        continue;
+                    }
+                    let _ = webview.set_zoom(config.zoom);
+                    if let Err(e) = webview.eval(&js) {
+                        eprintln!("Could not apply the page config in {label}: {e}");
                     }
                 }
             }
@@ -694,7 +673,11 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                     }
                 }
             }
-            Effect::ApplySidebar => apply_sidebar(app),
+            Effect::Layout {
+                page_start,
+                sidebar,
+            } => apply_layout(app, page_start, sidebar),
+            Effect::EmitSidebarState => emit_sidebar_state(app),
             Effect::ShowUnread { counts, total } => show_unread(app, counts, total),
         }
     }
@@ -729,27 +712,23 @@ fn toggle_sidebar(app: AppHandle) {
 /// The mouse entered or left the auto-hidden sidebar: show it over the page, or hide it.
 #[tauri::command]
 fn reveal_sidebar(app: AppHandle, shown: bool) {
-    let auto_hide = app
+    let effects = app
         .state::<Mutex<Core>>()
         .lock()
         .expect("core lock")
-        .sidebar_auto_hide();
-    let Some(window) = app.get_window("main") else {
-        return;
-    };
-    if !auto_hide {
-        return;
-    }
-    SIDEBAR_SHOWN.store(shown, Ordering::Relaxed);
+        .handle(Event::SidebarRevealed { shown });
     // Moving the sidebar into the window again puts it in front of the account pages.
-    if let (true, Some(sidebar)) = (shown, app.get_webview(SIDEBAR_LABEL)) {
+    if let (true, false, Some(window), Some(sidebar)) = (
+        shown,
+        effects.is_empty(),
+        app.get_window("main"),
+        app.get_webview(SIDEBAR_LABEL),
+    ) {
         if let Err(e) = sidebar.reparent(&window) {
             eprintln!("Could not bring the sidebar to the front: {e}");
         }
     }
-    if let Ok(size) = window.inner_size() {
-        layout(&app, &window, size);
-    }
+    run_effects(&app, effects);
 }
 
 #[tauri::command]
@@ -1262,24 +1241,6 @@ fn set_chat_list_width(app: AppHandle, webview: tauri::Webview, width: Option<f6
         return;
     }
     dispatch(&app, Event::ChatListResized { width });
-    let js = format!(
-        "window.__pairlineSetChatListWidth && window.__pairlineSetChatListWidth({})",
-        serde_json::json!(chat_list_width(&app))
-    );
-    for (label, account) in app.webviews() {
-        if label.starts_with(ACCOUNT_LABEL_PREFIX) {
-            if let Err(e) = account.eval(&js) {
-                eprintln!("Could not resize the chat list in {label}: {e}");
-            }
-        }
-    }
-}
-
-fn chat_list_width(app: &AppHandle) -> Option<f64> {
-    app.state::<Mutex<Core>>()
-        .lock()
-        .expect("core lock")
-        .chat_list_width()
 }
 
 /// Opens the system folder picker for downloads. Returns the path, or nothing if cancelled.
@@ -1341,24 +1302,6 @@ fn download_destination(dir: &str, wry_default: &Path) -> Option<PathBuf> {
 #[tauri::command]
 fn set_spellcheck(app: AppHandle, enabled: bool) {
     dispatch(&app, Event::SpellcheckChanged { enabled });
-    let js = format!(
-        "window.__pairlineSetSpellcheck && window.__pairlineSetSpellcheck({})",
-        spellcheck_enabled(&app)
-    );
-    for (label, account) in app.webviews() {
-        if label.starts_with(ACCOUNT_LABEL_PREFIX) {
-            if let Err(e) = account.eval(&js) {
-                eprintln!("Could not change spellcheck in {label}: {e}");
-            }
-        }
-    }
-}
-
-fn spellcheck_enabled(app: &AppHandle) -> bool {
-    app.state::<Mutex<Core>>()
-        .lock()
-        .expect("core lock")
-        .spellcheck_enabled()
 }
 
 #[tauri::command]
@@ -1748,13 +1691,6 @@ fn main() {
                 webview.app_handle(),
                 Event::PageLoaded { id: id.to_string() },
             );
-            let (css, zoom) = {
-                let state = webview.app_handle().state::<Mutex<Core>>();
-                let core = state.lock().expect("core lock");
-                (theme_css(core.theme()), core.zoom_factor())
-            };
-            inject_css(webview, &css);
-            let _ = webview.set_zoom(zoom);
         })
         .setup(|app| {
             let builder = WindowBuilder::new(app, "main")
@@ -1829,7 +1765,13 @@ fn main() {
                 .expect("core lock")
                 .appearance_effects();
             run_effects(&handle, appearance);
-            apply_sidebar(&handle);
+            let (page_start, sidebar) = handle
+                .state::<Mutex<Core>>()
+                .lock()
+                .expect("core lock")
+                .layout();
+            apply_layout(&handle, page_start, sidebar);
+            emit_sidebar_state(&handle);
             // The login item stores the path of the binary that registered it. Register it
             // again at each start so it follows a renamed or moved app. Dev builds skip this,
             // so a dev run does not point the login item at target/debug.
@@ -1869,7 +1811,14 @@ fn main() {
 
             let w = window.clone();
             window.on_window_event(move |event| match event {
-                WindowEvent::Resized(size) => layout(&handle, &w, *size),
+                WindowEvent::Resized(size) => {
+                    let (left, sidebar) = handle
+                        .state::<Mutex<Core>>()
+                        .lock()
+                        .expect("core lock")
+                        .layout();
+                    layout(&handle, &w, *size, left, sidebar);
+                }
                 WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
                     dispatch(&handle, Event::CloseRequested);
