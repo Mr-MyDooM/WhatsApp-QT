@@ -35,8 +35,9 @@ tauri-plugin-opener = "2"
 # the ones wry already pulls in, so Cargo.lock gains no new crate.
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
-mac-notification-sys = "0.6"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSDate", "NSSet", "NSString"] }
+objc2 = "0.6"
+objc2-user-notifications = "0.3.2"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSBundle", "NSDate", "NSDictionary", "NSError", "NSObject", "NSSet", "NSString", "NSValue"] }
 objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKWebsiteDataRecord"] }
 
 # Windows-only: winrt-notification depends on the `windows` crate, which does not

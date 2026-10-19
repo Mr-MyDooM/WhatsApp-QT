@@ -234,6 +234,11 @@ pub enum Event {
         body: String,
         now: u64,
     },
+    /// The user clicked a message notification. An unknown or removed account just shows
+    /// the window.
+    NotificationClicked {
+        account_id: String,
+    },
     NotificationSettingsChanged {
         messages: bool,
         show_sender: bool,
@@ -401,6 +406,11 @@ impl Core {
                 body,
                 now,
             } => self.notify(&account_id, &title, &body, now),
+            Event::NotificationClicked { account_id } => {
+                let mut effects = vec![Effect::ShowWindow];
+                effects.extend(self.switch(&account_id));
+                effects
+            }
             Event::NotificationSettingsChanged {
                 messages,
                 show_sender,
@@ -1070,6 +1080,26 @@ mod tests {
         let effects = core.handle(Event::SwitchAccount { id: "b".into() });
         assert!(effects.contains(&Effect::ShowAccount { id: "b".into() }));
         assert_eq!(saved(&effects)["active_account"], "b");
+    }
+
+    #[test]
+    fn notification_click_shows_window_and_switches_account() {
+        let mut core = started(TWO);
+        let effects = core.handle(Event::NotificationClicked {
+            account_id: "b".into(),
+        });
+        assert!(effects.contains(&Effect::ShowWindow));
+        assert!(effects.contains(&Effect::ShowAccount { id: "b".into() }));
+        assert_eq!(saved(&effects)["active_account"], "b");
+    }
+
+    #[test]
+    fn notification_click_for_unknown_account_only_shows_window() {
+        let mut core = started(TWO);
+        let effects = core.handle(Event::NotificationClicked {
+            account_id: "zz".into(),
+        });
+        assert_eq!(effects, vec![Effect::ShowWindow]);
     }
 
     #[test]

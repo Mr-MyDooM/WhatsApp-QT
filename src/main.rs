@@ -313,7 +313,7 @@ fn layout(app: &AppHandle, window: &tauri::Window, size: tauri::PhysicalSize<u32
 }
 
 /// Logs the detail, and shows the friendly message on the settings page if it is open.
-fn report_error(app: &AppHandle, friendly: &str, detail: &str) {
+pub(crate) fn report_error(app: &AppHandle, friendly: &str, detail: &str) {
     eprintln!("{detail}");
     let _ = app.emit_to(SETTINGS_LABEL, "app-error", friendly);
 }
@@ -954,6 +954,7 @@ fn main() {
                 Some((Err(e), p)) => Err(format!("Could not read {}: {e}", p.display())),
             };
             let handle = app.handle().clone();
+            notify::init(handle.clone());
             app.manage(Mutex::new(Core::default()));
             dispatch(
                 &handle,
