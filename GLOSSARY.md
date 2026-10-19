@@ -12,6 +12,12 @@ One entry per term: definition, boundaries, one resolved ambiguity. Agents write
 - Avoid: "user", "session" (WhatsApp Web has its own sessions), "profile", "tab" when the identity is meant.
 - Resolved ambiguity: removing an account deletes its login and data for good. Adding a new account never brings back a removed one.
 
+## Account page
+- Definition: the WhatsApp Web page loaded in one account's webview.
+- Boundary: untrusted. The app changes it only through the injected shims and one page config (theme CSS, zoom, spellcheck, chat list width). The app chrome (sidebar, settings, title bar) is not an account page.
+- Avoid: "remote page", "tab", "webview" when the page content is meant.
+- Resolved ambiguity: every setting that changes the account page reaches it as the full page config, at load and on each change.
+
 ## Account name
 - Definition: the label the user sees for an account, such as "Work". A new account gets a default name; the user can rename it.
 - Boundary: a label, not an identity. Renaming never changes which account it is.
