@@ -12,6 +12,8 @@ fn main() {
             "set_zoom",
             "set_notifications",
             "notify",
+            "set_autostart",
+            "set_clear_cache_on_exit",
             "set_close_to_tray",
             "set_start_minimized",
         ]),
