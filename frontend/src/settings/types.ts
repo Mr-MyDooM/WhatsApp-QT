@@ -12,6 +12,7 @@ export type SettingsData = {
   clear_cache_on_exit: boolean;
   clear_cache_supported: boolean;
   close_to_tray: boolean;
+  sidebar_auto_hide: boolean;
   start_minimized: boolean;
   snooze_until: number | null;
   accounts: SettingsAccount[];
@@ -25,6 +26,7 @@ export type Field =
   | "autostart"
   | "start-minimized"
   | "close-to-tray"
+  | "sidebar-auto-hide"
   | "clear-cache"
   | "notifications"
   | "show-sender"

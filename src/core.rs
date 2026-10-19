@@ -156,6 +156,8 @@ pub struct Settings {
     pub close_to_tray: bool,
     /// Sidebar shows names and counts (wide) or the avatar column only.
     pub sidebar_wide: bool,
+    /// Sidebar hides at the window edge and shows over the page on mouse over.
+    pub sidebar_auto_hide: bool,
     pub zoom_factor: f64,
     pub spellcheck_enabled: bool,
     pub window_width: i32,
@@ -181,6 +183,7 @@ impl Default for Settings {
             start_minimized: false,
             close_to_tray: false,
             sidebar_wide: false,
+            sidebar_auto_hide: false,
             zoom_factor: 1.0,
             spellcheck_enabled: true,
             window_width: 0,
@@ -310,8 +313,12 @@ pub enum Event {
     StartMinimizedChanged {
         enabled: bool,
     },
-    /// Toggle button or View menu item: switch between the wide sidebar and the avatar column.
+    /// Toggle button or View menu item: go from the avatar column to the wide sidebar, to
+    /// auto-hide, and back to the avatar column.
     SidebarToggled,
+    SidebarAutoHideChanged {
+        enabled: bool,
+    },
     /// Snooze message notifications for all accounts. `now` is Unix seconds.
     SnoozeSet {
         minutes: u64,
@@ -617,7 +624,19 @@ impl Core {
                 self.saved_effects()
             }
             Event::SidebarToggled => {
-                self.settings.sidebar_wide = !self.settings.sidebar_wide;
+                let s = &mut self.settings;
+                (s.sidebar_wide, s.sidebar_auto_hide) = match (s.sidebar_wide, s.sidebar_auto_hide)
+                {
+                    (_, true) => (false, false),
+                    (false, false) => (true, false),
+                    (true, false) => (false, true),
+                };
+                let mut effects = vec![Effect::ApplySidebar];
+                self.save(&mut effects);
+                effects
+            }
+            Event::SidebarAutoHideChanged { enabled } => {
+                self.settings.sidebar_auto_hide = enabled;
                 let mut effects = vec![Effect::ApplySidebar];
                 self.save(&mut effects);
                 effects
@@ -774,6 +793,10 @@ impl Core {
 
     pub fn sidebar_wide(&self) -> bool {
         self.settings.sidebar_wide
+    }
+
+    pub fn sidebar_auto_hide(&self) -> bool {
+        self.settings.sidebar_auto_hide
     }
 
     pub fn start_minimized(&self) -> bool {
@@ -1262,6 +1285,7 @@ mod tests {
         assert_eq!(out["close_to_tray"], false);
         // Missing sidebar field: avatar column.
         assert_eq!(out["sidebar_wide"], false);
+        assert_eq!(out["sidebar_auto_hide"], false);
         assert_eq!(
             (out["window_width"].as_i64(), out["window_height"].as_i64()),
             (Some(0), Some(0))
@@ -1271,20 +1295,39 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_toggle_flips_applies_and_saves_the_state() {
+    fn sidebar_toggle_goes_narrow_wide_auto_hide_narrow_and_saves() {
         let mut core = Core::default();
         core.handle(Event::SettingsLoaded {
             raw: Ok(None),
             fresh_id: "u1".into(),
         });
-        assert!(!core.sidebar_wide());
+        assert!(!core.sidebar_wide() && !core.sidebar_auto_hide());
         let effects = core.handle(Event::SidebarToggled);
-        assert!(core.sidebar_wide());
+        assert!(core.sidebar_wide() && !core.sidebar_auto_hide());
         assert_eq!(effects[0], Effect::ApplySidebar);
         assert_eq!(saved(&effects)["sidebar_wide"], true);
         let effects = core.handle(Event::SidebarToggled);
-        assert!(!core.sidebar_wide());
-        assert_eq!(saved(&effects)["sidebar_wide"], false);
+        assert!(!core.sidebar_wide() && core.sidebar_auto_hide());
+        assert_eq!(saved(&effects)["sidebar_auto_hide"], true);
+        let effects = core.handle(Event::SidebarToggled);
+        assert!(!core.sidebar_wide() && !core.sidebar_auto_hide());
+        assert_eq!(saved(&effects)["sidebar_auto_hide"], false);
+    }
+
+    #[test]
+    fn auto_hide_switch_keeps_the_width_and_saves() {
+        let mut core = Core::default();
+        core.handle(Event::SettingsLoaded {
+            raw: Ok(Some(r#"{"sidebar_wide": true}"#.into())),
+            fresh_id: "u1".into(),
+        });
+        let effects = core.handle(Event::SidebarAutoHideChanged { enabled: true });
+        assert!(core.sidebar_wide() && core.sidebar_auto_hide());
+        assert_eq!(effects[0], Effect::ApplySidebar);
+        assert_eq!(saved(&effects)["sidebar_auto_hide"], true);
+        // The button pins an auto-hidden sidebar as the avatar column.
+        core.handle(Event::SidebarToggled);
+        assert!(!core.sidebar_wide() && !core.sidebar_auto_hide());
     }
 
     #[test]

@@ -31,6 +31,10 @@ use crate::core::{
 /// account page. Keep the top strip in `frontend/src/sidebar/Sidebar.tsx` for them.
 const SIDEBAR_NARROW: f64 = 72.0;
 const SIDEBAR_WIDE: f64 = 220.0;
+/// Width of the auto-hidden sidebar: the strip at the window edge that shows it on mouse over.
+const SIDEBAR_EDGE: f64 = 6.0;
+/// True while the auto-hidden sidebar shows over the page. Not saved.
+static SIDEBAR_SHOWN: AtomicBool = AtomicBool::new(false);
 const WINDOW_WIDTH: f64 = 1200.0;
 const WINDOW_HEIGHT: f64 = 800.0;
 const ACCOUNT_URL: &str = "https://web.whatsapp.com";
@@ -96,7 +100,7 @@ fn show_load_error(app: &AppHandle, id: &str) {
         (Ok(size), Ok(scale)) => size.to_logical::<f64>(scale),
         _ => return,
     };
-    let (position, size) = content_bounds(sidebar_width(app), size);
+    let (position, size) = content_bounds(sidebar_widths(app).0, size);
     let result = window.add_child(
         WebviewBuilder::new(label, WebviewUrl::App("error.html".into())),
         position,
@@ -339,7 +343,7 @@ fn add_account_webview(
     let size = window
         .inner_size()?
         .to_logical::<f64>(window.scale_factor()?);
-    let (position, size) = content_bounds(sidebar_width(app), size);
+    let (position, size) = content_bounds(sidebar_widths(app).0, size);
     window.add_child(builder, position, size)?;
     Ok(())
 }
@@ -380,33 +384,40 @@ fn show_account(app: &AppHandle, id: &str) {
     }
 }
 
-fn sidebar_width(app: &AppHandle) -> f64 {
-    if app
-        .state::<Mutex<Core>>()
-        .lock()
-        .expect("core lock")
-        .sidebar_wide()
-    {
+/// Returns where the page starts and how wide the sidebar webview is. An auto-hidden sidebar
+/// shows over the page, so the page starts at the edge strip.
+fn sidebar_widths(app: &AppHandle) -> (f64, f64) {
+    let core = app.state::<Mutex<Core>>();
+    let core = core.lock().expect("core lock");
+    let full = if core.sidebar_wide() {
         SIDEBAR_WIDE
     } else {
         SIDEBAR_NARROW
+    };
+    if !core.sidebar_auto_hide() {
+        return (full, full);
+    }
+    if SIDEBAR_SHOWN.load(Ordering::Relaxed) {
+        (SIDEBAR_EDGE, full)
+    } else {
+        (SIDEBAR_EDGE, SIDEBAR_EDGE)
     }
 }
 
 fn layout(app: &AppHandle, window: &tauri::Window, size: tauri::PhysicalSize<u32>) {
     let size = size.to_logical::<f64>(window.scale_factor().unwrap_or(1.0));
-    let sidebar = sidebar_width(app);
+    let (left, sidebar) = sidebar_widths(app);
     for (label, webview) in app.webviews() {
         if label == SIDEBAR_LABEL {
             let _ = webview.set_size(LogicalSize::new(sidebar, size.height));
         } else if label == TITLE_BAR_LABEL {
-            let _ = webview.set_position(LogicalPosition::new(sidebar, 0.0));
+            let _ = webview.set_position(LogicalPosition::new(left, 0.0));
             let _ = webview.set_size(LogicalSize::new(
-                (size.width - sidebar).max(1.0),
+                (size.width - left).max(1.0),
                 TITLE_BAR_HEIGHT,
             ));
         } else if label.starts_with(ACCOUNT_LABEL_PREFIX) || label.starts_with(ERROR_LABEL_PREFIX) {
-            let (position, bounds) = content_bounds(sidebar, size);
+            let (position, bounds) = content_bounds(left, size);
             let _ = webview.set_position(position);
             let _ = webview.set_size(bounds);
         }
@@ -415,17 +426,21 @@ fn layout(app: &AppHandle, window: &tauri::Window, size: tauri::PhysicalSize<u32
 
 /// Tells the sidebar page which state it is in.
 fn emit_sidebar_state(app: &AppHandle) {
-    let wide = app
-        .state::<Mutex<Core>>()
-        .lock()
-        .expect("core lock")
-        .sidebar_wide();
-    if let Err(e) = app.emit_to(SIDEBAR_LABEL, "sidebar-wide", wide) {
+    let (wide, auto_hide) = {
+        let core = app.state::<Mutex<Core>>();
+        let core = core.lock().expect("core lock");
+        (core.sidebar_wide(), core.sidebar_auto_hide())
+    };
+    let result = app
+        .emit_to(SIDEBAR_LABEL, "sidebar-wide", wide)
+        .and_then(|()| app.emit_to(SIDEBAR_LABEL, "sidebar-auto-hide", auto_hide));
+    if let Err(e) = result {
         eprintln!("Could not update the sidebar state: {e}");
     }
 }
 
 fn apply_sidebar(app: &AppHandle) {
+    SIDEBAR_SHOWN.store(false, Ordering::Relaxed);
     if let Some(window) = app.get_window("main") {
         if let Ok(size) = window.inner_size() {
             layout(app, &window, size);
@@ -659,6 +674,32 @@ fn sidebar_ready(app: AppHandle) {
 #[tauri::command]
 fn toggle_sidebar(app: AppHandle) {
     dispatch(&app, Event::SidebarToggled);
+}
+
+/// The mouse entered or left the auto-hidden sidebar: show it over the page, or hide it.
+#[tauri::command]
+fn reveal_sidebar(app: AppHandle, shown: bool) {
+    let auto_hide = app
+        .state::<Mutex<Core>>()
+        .lock()
+        .expect("core lock")
+        .sidebar_auto_hide();
+    let Some(window) = app.get_window("main") else {
+        return;
+    };
+    if !auto_hide {
+        return;
+    }
+    SIDEBAR_SHOWN.store(shown, Ordering::Relaxed);
+    // Moving the sidebar into the window again puts it in front of the account pages.
+    if let (true, Some(sidebar)) = (shown, app.get_webview(SIDEBAR_LABEL)) {
+        if let Err(e) = sidebar.reparent(&window) {
+            eprintln!("Could not bring the sidebar to the front: {e}");
+        }
+    }
+    if let Ok(size) = window.inner_size() {
+        layout(&app, &window, size);
+    }
 }
 
 #[tauri::command]
@@ -1163,6 +1204,7 @@ fn get_settings(core: tauri::State<Mutex<Core>>) -> serde_json::Value {
         "theme": core.theme(),
         "zoom_factor": core.zoom_factor(),
         "close_to_tray": core.close_to_tray(),
+        "sidebar_auto_hide": core.sidebar_auto_hide(),
         "start_minimized": core.start_minimized(),
         "notifications": n.show_message_notifications,
         "show_sender": n.show_sender,
@@ -1177,6 +1219,11 @@ fn get_settings(core: tauri::State<Mutex<Core>>) -> serde_json::Value {
         "snooze_until": core.active_snooze_end(unix_now()),
         "accounts": core.accounts(),
     })
+}
+
+#[tauri::command]
+fn set_sidebar_auto_hide(app: AppHandle, enabled: bool) {
+    dispatch(&app, Event::SidebarAutoHideChanged { enabled });
 }
 
 #[tauri::command]
@@ -1472,6 +1519,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             sidebar_ready,
             toggle_sidebar,
+            reveal_sidebar,
             open_settings_window,
             add_account,
             switch_account,
@@ -1496,6 +1544,7 @@ fn main() {
             set_autostart,
             set_clear_cache_on_exit,
             set_close_to_tray,
+            set_sidebar_auto_hide,
             set_start_minimized,
             set_notifications,
             notify,

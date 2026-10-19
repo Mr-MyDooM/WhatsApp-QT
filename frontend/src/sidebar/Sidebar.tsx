@@ -1,13 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { BellOff, PanelLeftClose, PanelLeftOpen, Plus, Settings, type LucideIcon } from "lucide-react";
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { BellOff, PanelLeftClose, PanelLeftOpen, Pin, Plus, Settings, type LucideIcon } from "lucide-react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useAvatars } from "../lib/useAvatars";
 import { cn } from "../lib/utils";
 
 // Cmd+1 to Cmd+9 switch accounts; keep equal to MAX_SWITCH_SHORTCUTS in main.rs.
 const MAX_SHORTCUT = 9;
 const UNREAD_CAP = 99;
+// Wait before an auto-hidden sidebar hides, so a short exit does not close it.
+const HIDE_DELAY_MS = 300;
 
 type Account = { id: string; name: string; initials: string; hue: number; muted: boolean };
 type AccountsPayload = { accounts: Account[]; active: string };
@@ -44,6 +46,9 @@ export function Sidebar() {
   // Unread count per account UUID; accounts with none are absent.
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [wide, setWide] = useState(false);
+  const [autoHide, setAutoHide] = useState(false);
+  const [shown, setShown] = useState(false);
+  const hideTimer = useRef<number | undefined>(undefined);
   const avatars = useAvatars();
 
   useEffect(() => {
@@ -55,6 +60,10 @@ export function Sidebar() {
       }),
       listen<Record<string, number>>("unread", (e) => setUnread(e.payload)),
       listen<boolean>("sidebar-wide", (e) => setWide(e.payload)),
+      listen<boolean>("sidebar-auto-hide", (e) => {
+        setAutoHide(e.payload);
+        setShown(false);
+      }),
     ]).then((fns) => {
       // Ask for the first state only when both listeners are in place.
       if (stopped) fns.forEach((f) => f());
@@ -67,6 +76,25 @@ export function Sidebar() {
     };
   }, []);
 
+  function reveal(next: boolean) {
+    window.clearTimeout(hideTimer.current);
+    if (!autoHide) return;
+    if (next) {
+      setShown(true);
+      invoke("reveal_sidebar", { shown: true });
+      return;
+    }
+    hideTimer.current = window.setTimeout(() => {
+      setShown(false);
+      invoke("reveal_sidebar", { shown: false });
+    }, HIDE_DELAY_MS);
+  }
+
+  // Auto-hide: only the edge strip is left, and it shows the sidebar on mouse over.
+  if (autoHide && !shown) {
+    return <nav aria-label="Sidebar" className="h-full" onMouseEnter={() => reveal(true)} />;
+  }
+
   function moveFocus(e: KeyboardEvent<HTMLDivElement>) {
     const step = { ArrowDown: 1, ArrowUp: -1 }[e.key];
     if (!step) return;
@@ -76,7 +104,12 @@ export function Sidebar() {
   }
 
   return (
-    <nav className="flex h-full flex-col">
+    <nav
+      onMouseEnter={() => reveal(true)}
+      onMouseLeave={() => reveal(false)}
+      // The page is behind a shown auto-hidden sidebar, so it cannot be transparent.
+      className={cn("flex h-full flex-col", autoHide && "bg-[var(--sidebar-fallback)]")}
+    >
       {/* Top strip: the traffic lights sit here, so they never cover an account. Drags the window. */}
       <div data-tauri-drag-region className="h-[38px] shrink-0" />
       <div
@@ -158,9 +191,10 @@ export function Sidebar() {
       </div>
       <div className="flex shrink-0 flex-col gap-1 pb-3 pt-1">
         <ActionRow icon={Settings} label="Settings" wide={wide} onClick={() => invoke("open_settings_window")} />
+        {/* Cycles narrow, wide, auto-hide, narrow. */}
         <ActionRow
-          icon={wide ? PanelLeftClose : PanelLeftOpen}
-          label={wide ? "Hide account names" : "Show account names"}
+          icon={autoHide ? Pin : wide ? PanelLeftClose : PanelLeftOpen}
+          label={autoHide ? "Keep sidebar open" : wide ? "Hide sidebar" : "Show account names"}
           wide={wide}
           onClick={() => invoke("toggle_sidebar")}
         />

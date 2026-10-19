@@ -5,6 +5,7 @@ fn main() {
         tauri_build::AppManifest::new().commands(&[
             "sidebar_ready",
             "toggle_sidebar",
+            "reveal_sidebar",
             "open_settings_window",
             "add_account",
             "switch_account",
@@ -33,6 +34,7 @@ fn main() {
             "set_autostart",
             "set_clear_cache_on_exit",
             "set_close_to_tray",
+            "set_sidebar_auto_hide",
             "set_start_minimized",
         ]),
     ))

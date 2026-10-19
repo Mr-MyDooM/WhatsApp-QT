@@ -106,6 +106,17 @@ export function GeneralPane({ s, change, patch, errorFor }: PaneProps) {
             invoke("set_close_to_tray", { enabled });
           }}
         />
+        <SwitchRow
+          id="sidebar-auto-hide"
+          label="Auto-hide sidebar"
+          checked={s.sidebar_auto_hide}
+          error={errorFor("sidebar-auto-hide")}
+          onChange={(enabled) => {
+            change("sidebar-auto-hide");
+            patch({ sidebar_auto_hide: enabled });
+            invoke("set_sidebar_auto_hide", { enabled });
+          }}
+        />
         {s.clear_cache_supported && (
           <SwitchRow
             id="clear-cache"

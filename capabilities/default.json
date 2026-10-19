@@ -6,6 +6,7 @@
     "core:window:allow-start-dragging",
     "allow-sidebar-ready",
     "allow-toggle-sidebar",
+    "allow-reveal-sidebar",
     "allow-open-settings-window",
     "allow-add-account",
     "allow-switch-account",

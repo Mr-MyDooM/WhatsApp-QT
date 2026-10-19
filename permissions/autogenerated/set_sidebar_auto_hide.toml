@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-sidebar-auto-hide"
+description = "Enables the set_sidebar_auto_hide command without any pre-configured scope."
+commands.allow = ["set_sidebar_auto_hide"]
+
+[[permission]]
+identifier = "deny-set-sidebar-auto-hide"
+description = "Denies the set_sidebar_auto_hide command without any pre-configured scope."
+commands.deny = ["set_sidebar_auto_hide"]

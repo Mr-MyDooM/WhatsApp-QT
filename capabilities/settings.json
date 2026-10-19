@@ -24,6 +24,7 @@
     "allow-set-autostart",
     "allow-set-clear-cache-on-exit",
     "allow-set-close-to-tray",
+    "allow-set-sidebar-auto-hide",
     "allow-set-start-minimized"
   ]
 }
