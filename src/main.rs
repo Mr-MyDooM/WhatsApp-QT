@@ -3,6 +3,7 @@ mod core;
 #[cfg(target_os = "macos")]
 mod dock;
 mod notify;
+mod page;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -23,8 +24,8 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use crate::avatar::Avatars;
 use crate::core::{
-    avatar_hue, initials, is_account_origin, is_page_local_url, is_whatsapp_frame_origin,
-    theme_css, Core, Effect, Event, MenuAccount, NotificationBlock,
+    avatar_hue, initials, is_account_origin, is_page_local_url, is_whatsapp_frame_origin, Core,
+    Effect, Event, MenuAccount, NotificationBlock, PageTarget,
 };
 
 /// Avatar column. Wider than the macOS traffic lights (about 70 px), so they never reach the
@@ -61,6 +62,8 @@ const AVATAR_SCRIPT: &str = include_str!("avatar_shim.js");
 const CHAT_LIST_SCRIPT: &str = include_str!("chat_list_shim.js");
 /// Turns spellcheck off in WhatsApp's text boxes when the setting is off.
 const SPELLCHECK_SCRIPT: &str = include_str!("spellcheck_shim.js");
+/// Shows the theme CSS from the page config.
+const THEME_SCRIPT: &str = include_str!("theme_shim.js");
 /// Longest wait for the cache clear at quit. The app exits after this even if WebKit is slow.
 const CACHE_CLEAR_TIMEOUT: Duration = Duration::from_secs(3);
 const AUTOSTART_FAILED_MESSAGE: &str = "Could not change start at login. The setting is unchanged.";
@@ -334,13 +337,11 @@ fn add_account_webview(
     id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let uuid = uuid::Uuid::parse_str(id)?;
-    let chat_list_script = format!(
-        "window.__PAIRLINE_CHAT_LIST_WIDTH__ = {};\n{CHAT_LIST_SCRIPT}",
-        serde_json::json!(chat_list_width(app))
-    );
-    let spellcheck_script = format!(
-        "window.__PAIRLINE_SPELLCHECK__ = {};\n{SPELLCHECK_SCRIPT}",
-        spellcheck_enabled(app)
+    let page_script = page::init_script(
+        &app.state::<Mutex<Core>>()
+            .lock()
+            .expect("core lock")
+            .page_config(),
     );
     let builder = WebviewBuilder::new(
         account_label(id),
@@ -364,10 +365,12 @@ fn add_account_webview(
         open_in_browser(&url);
         tauri::webview::NewWindowResponse::Deny
     })
+    .initialization_script(&page_script)
     .initialization_script(NOTIFICATION_SCRIPT)
     .initialization_script(AVATAR_SCRIPT)
-    .initialization_script(&chat_list_script)
-    .initialization_script(&spellcheck_script)
+    .initialization_script(THEME_SCRIPT)
+    .initialization_script(CHAT_LIST_SCRIPT)
+    .initialization_script(SPELLCHECK_SCRIPT)
     .on_download(|webview, event| {
         if let tauri::webview::DownloadEvent::Requested { destination, .. } = event {
             let dir = download_path(webview.app_handle());
@@ -505,16 +508,6 @@ pub(crate) fn report_error(app: &AppHandle, friendly: &str, detail: &str) {
     let _ = app.emit_to(SETTINGS_LABEL, "app-error", friendly);
 }
 
-/// Empty `css` removes the injected theme.
-fn inject_css(webview: &tauri::Webview, css: &str) {
-    let literal = serde_json::to_string(css).expect("string serializes");
-    let _ = webview.eval(format!(
-        "(function(){{var e=document.getElementById('app-theme-style');if(e)e.remove();\
-         var c={literal};if(!c)return;var s=document.createElement('style');\
-         s.id='app-theme-style';s.textContent=c;document.head.appendChild(s);}})();"
-    ));
-}
-
 /// Sidebar gets each account's count; tray tooltip and Dock badge get the total.
 fn show_unread(app: &AppHandle, counts: BTreeMap<String, u32>, total: u32) {
     if let Err(e) = app.emit_to(SIDEBAR_LABEL, "unread", counts) {
@@ -566,7 +559,7 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                 delete_account_data(app, &id)
             }
             Effect::ShowAccount { id } => show_account(app, &id),
-            Effect::ApplyTheme { theme, css } => {
+            Effect::SetWindowScheme { theme } => {
                 let scheme = match theme.as_str() {
                     "dark" => Some(Theme::Dark),
                     "light" => Some(Theme::Light),
@@ -575,16 +568,19 @@ fn run_effects(app: &AppHandle, effects: Vec<Effect>) {
                 if let Some(window) = app.get_window("main") {
                     let _ = window.set_theme(scheme);
                 }
-                for (label, webview) in app.webviews() {
-                    if label.starts_with(ACCOUNT_LABEL_PREFIX) {
-                        inject_css(&webview, &css);
-                    }
-                }
             }
-            Effect::ApplyZoom { factor } => {
+            Effect::ApplyPageConfig { target, config } => {
+                let js = page::apply_script(&config);
                 for (label, webview) in app.webviews() {
-                    if label.starts_with(ACCOUNT_LABEL_PREFIX) {
-                        let _ = webview.set_zoom(factor);
+                    let Some(id) = label.strip_prefix(ACCOUNT_LABEL_PREFIX) else {
+                        continue;
+                    };
+                    if matches!(&target, PageTarget::Account(only) if only != id) {
+                        continue;
+                    }
+                    let _ = webview.set_zoom(config.zoom);
+                    if let Err(e) = webview.eval(&js) {
+                        eprintln!("Could not apply the page config in {label}: {e}");
                     }
                 }
             }
@@ -1284,24 +1280,6 @@ fn set_chat_list_width(app: AppHandle, webview: tauri::Webview, width: Option<f6
         return;
     }
     dispatch(&app, Event::ChatListResized { width });
-    let js = format!(
-        "window.__pairlineSetChatListWidth && window.__pairlineSetChatListWidth({})",
-        serde_json::json!(chat_list_width(&app))
-    );
-    for (label, account) in app.webviews() {
-        if label.starts_with(ACCOUNT_LABEL_PREFIX) {
-            if let Err(e) = account.eval(&js) {
-                eprintln!("Could not resize the chat list in {label}: {e}");
-            }
-        }
-    }
-}
-
-fn chat_list_width(app: &AppHandle) -> Option<f64> {
-    app.state::<Mutex<Core>>()
-        .lock()
-        .expect("core lock")
-        .chat_list_width()
 }
 
 /// Opens the system folder picker for downloads. Returns the path, or nothing if cancelled.
@@ -1363,24 +1341,6 @@ fn download_destination(dir: &str, wry_default: &Path) -> Option<PathBuf> {
 #[tauri::command]
 fn set_spellcheck(app: AppHandle, enabled: bool) {
     dispatch(&app, Event::SpellcheckChanged { enabled });
-    let js = format!(
-        "window.__pairlineSetSpellcheck && window.__pairlineSetSpellcheck({})",
-        spellcheck_enabled(&app)
-    );
-    for (label, account) in app.webviews() {
-        if label.starts_with(ACCOUNT_LABEL_PREFIX) {
-            if let Err(e) = account.eval(&js) {
-                eprintln!("Could not change spellcheck in {label}: {e}");
-            }
-        }
-    }
-}
-
-fn spellcheck_enabled(app: &AppHandle) -> bool {
-    app.state::<Mutex<Core>>()
-        .lock()
-        .expect("core lock")
-        .spellcheck_enabled()
 }
 
 #[tauri::command]
@@ -1770,13 +1730,6 @@ fn main() {
                 webview.app_handle(),
                 Event::PageLoaded { id: id.to_string() },
             );
-            let (css, zoom) = {
-                let state = webview.app_handle().state::<Mutex<Core>>();
-                let core = state.lock().expect("core lock");
-                (theme_css(core.theme()), core.zoom_factor())
-            };
-            inject_css(webview, &css);
-            let _ = webview.set_zoom(zoom);
         })
         .setup(|app| {
             let builder = WindowBuilder::new(app, "main")

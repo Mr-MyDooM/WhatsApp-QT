@@ -4,10 +4,12 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::page::{theme_css, PageConfig};
+
 const DEFAULT_ACCOUNT_NAME: &str = "Account 1";
 const MIN_ZOOM: f64 = 0.25;
 const MAX_ZOOM: f64 = 3.0;
-/// Chat list width limits in CSS pixels. Keep equal to the limits in `chat_list_shim.js`.
+/// Chat list width limits in CSS pixels. The page config carries them to `chat_list_shim.js`.
 pub const CHAT_LIST_MIN_WIDTH: f64 = 200.0;
 pub const CHAT_LIST_MAX_WIDTH: f64 = 900.0;
 /// Caps for text from the web page, which is untrusted.
@@ -23,82 +25,6 @@ const MAX_DOWNLOAD_PATH_CHARS: usize = 1024;
 const HIDDEN_SENDER_BODY: &str = "New message";
 const TEST_TITLE: &str = "Test";
 const TEST_BODY: &str = "This is a test notification.";
-
-const DARK_BASE_CSS: &str = r#"
-    /* Dark theme base styles */
-    body, #app, [data-testid="conversation-panel-body"] {
-        background-color: #1e1e1e !important;
-        color: #ffffff !important;
-        font-family: 'Fira Code', 'JetBrains Mono', 'monospace' !important;
-    }
-"#;
-const DARK_CHAT_CSS: &str = r#"
-    /* Dark theme chat styles */
-    [data-testid="chat-list"] {
-        background-color: #2d2d2d !important;
-    }
-    [data-testid="chat"] {
-        background-color: #3d3d3d !important;
-        border-bottom: 1px solid #555 !important;
-    }
-"#;
-const LIGHT_BASE_CSS: &str = r#"
-    /* Light theme base styles */
-    body, #app, [data-testid="conversation-panel-body"] {
-        background-color: #ffffff !important;
-        color: #000000 !important;
-        font-family: 'Fira Code', 'JetBrains Mono', 'monospace' !important;
-    }
-"#;
-const LIGHT_CHAT_CSS: &str = r#"
-    /* Light theme chat styles */
-    [data-testid="chat-list"] {
-        background-color: #f8f9fa !important;
-    }
-    [data-testid="chat"] {
-        background-color: #ffffff !important;
-        border-bottom: 1px solid #e9ecef !important;
-    }
-"#;
-
-/// CSS to inject into account webviews. "system" and unknown names inject nothing.
-pub fn theme_css(theme: &str) -> String {
-    let mut css = String::new();
-    if theme == "dark" {
-        css.push_str(DARK_BASE_CSS);
-        css.push_str(DARK_CHAT_CSS);
-        css.push_str(
-            r#"
-                /* Additional dark theme styles */
-                ._3OtEr, .app, #app, .app-wrapper-web, [data-testid="app-wrapper"] {
-                    background-color: #1e1e1e !important;
-                }
-                ._3j7s9 {
-                    background-color: #2d2d2d !important;
-                }
-                /* WhatsApp specific dark theme */
-                [data-testid="chatlist-header"], [data-testid="chat-header"] {
-                    background-color: #2d2d2d !important;
-                }
-            "#,
-        );
-    } else if theme == "light" {
-        css.push_str(LIGHT_BASE_CSS);
-        css.push_str(LIGHT_CHAT_CSS);
-        css.push_str(
-            r#"
-                /* Additional light theme styles */
-                ._3OtEr, .app, #app, .app-wrapper-web, [data-testid="app-wrapper"] {
-                    background-color: #ffffff !important;
-                }
-                ._3j7s9 {
-                    background-color: #f8f9fa !important;
-                }
-            "#,
-        );
-    }
-    css
-}
 
 fn is_known_theme(theme: &str) -> bool {
     matches!(theme, "light" | "dark" | "system")
@@ -394,6 +320,13 @@ pub enum Event {
     },
 }
 
+/// Which account pages get a page config.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PageTarget {
+    All,
+    Account(String),
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Effect {
     CreateAccountWebview {
@@ -409,13 +342,14 @@ pub enum Effect {
     ShowAccount {
         id: String,
     },
-    /// `theme` is "light", "dark" or "system"; empty `css` removes any injected theme.
-    ApplyTheme {
+    /// Set the main window color scheme. `theme` is "light", "dark" or "system".
+    SetWindowScheme {
         theme: String,
-        css: String,
     },
-    ApplyZoom {
-        factor: f64,
+    /// Send the page config to the targeted account pages: native zoom and one script run each.
+    ApplyPageConfig {
+        target: PageTarget,
+        config: PageConfig,
     },
     /// Idempotent. If the system refuses, the shell sends `Event::AutostartFailed`.
     SetAutostart {
@@ -667,7 +601,7 @@ impl Core {
                 }
                 self.settings.chat_list_width =
                     width.map(|w| w.clamp(CHAT_LIST_MIN_WIDTH, CHAT_LIST_MAX_WIDTH));
-                let mut effects = Vec::new();
+                let mut effects = vec![self.apply_page_config(PageTarget::All)];
                 self.save(&mut effects);
                 effects
             }
@@ -687,7 +621,9 @@ impl Core {
             }
             Event::SpellcheckChanged { enabled } => {
                 self.settings.spellcheck_enabled = enabled;
-                self.saved_effects()
+                let mut effects = vec![self.apply_page_config(PageTarget::All)];
+                self.save(&mut effects);
+                effects
             }
             Event::DeepLinkOpened { url } => self.open_deep_link(&url),
             Event::TitleChanged { id, title } => self.set_unread(id, unread_count(&title)),
@@ -847,6 +783,7 @@ impl Core {
         self.settings.sidebar_auto_hide
     }
 
+    #[cfg(test)]
     pub fn chat_list_width(&self) -> Option<f64> {
         self.settings.chat_list_width
     }
@@ -882,14 +819,30 @@ impl Core {
     /// Effects that bring the webviews in line with the current settings.
     pub fn appearance_effects(&self) -> Vec<Effect> {
         vec![
-            Effect::ApplyTheme {
+            Effect::SetWindowScheme {
                 theme: self.settings.theme.clone(),
-                css: theme_css(&self.settings.theme),
             },
-            Effect::ApplyZoom {
-                factor: self.settings.zoom_factor,
-            },
+            self.apply_page_config(PageTarget::All),
         ]
+    }
+
+    /// Every setting that changes the account page.
+    pub fn page_config(&self) -> PageConfig {
+        PageConfig {
+            theme_css: theme_css(&self.settings.theme),
+            zoom: self.settings.zoom_factor,
+            spellcheck: self.settings.spellcheck_enabled,
+            chat_list_width: self.settings.chat_list_width,
+            chat_list_min: CHAT_LIST_MIN_WIDTH,
+            chat_list_max: CHAT_LIST_MAX_WIDTH,
+        }
+    }
+
+    fn apply_page_config(&self, target: PageTarget) -> Effect {
+        Effect::ApplyPageConfig {
+            target,
+            config: self.page_config(),
+        }
     }
 
     fn set_theme(&mut self, theme: String) -> Vec<Effect> {
@@ -899,8 +852,10 @@ impl Core {
             }];
         }
         self.settings.theme = theme.clone();
-        let css = theme_css(&theme);
-        let mut effects = vec![Effect::ApplyTheme { theme, css }];
+        let mut effects = vec![
+            Effect::SetWindowScheme { theme },
+            self.apply_page_config(PageTarget::All),
+        ];
         self.save(&mut effects);
         effects
     }
@@ -914,7 +869,7 @@ impl Core {
         // Round to 2 decimals so repeated 0.1 steps do not drift (1.2000000000000002).
         let factor = ((factor * 100.0).round() / 100.0).clamp(MIN_ZOOM, MAX_ZOOM);
         self.settings.zoom_factor = factor;
-        let mut effects = vec![Effect::ApplyZoom { factor }];
+        let mut effects = vec![self.apply_page_config(PageTarget::All)];
         self.save(&mut effects);
         effects
     }
@@ -1067,17 +1022,18 @@ impl Core {
     }
 
     fn page_loaded(&mut self, id: &str) -> Vec<Effect> {
+        let page = self.apply_page_config(PageTarget::Account(id.to_string()));
         let Some(load) = self.loads.get_mut(id) else {
-            return Vec::new();
+            return vec![page];
         };
         let was_failed = load.status == LoadStatus::Failed;
         load.status = LoadStatus::Loaded;
         load.failures = 0;
+        let mut effects = vec![page];
         if was_failed {
-            vec![Effect::HideLoadError { id: id.to_string() }]
-        } else {
-            Vec::new()
+            effects.push(Effect::HideLoadError { id: id.to_string() });
         }
+        effects
     }
 
     fn load_check_due(&mut self, id: String, attempt: u64) -> Vec<Effect> {
@@ -1405,6 +1361,10 @@ mod tests {
             width: Some(10_000.0),
         });
         assert_eq!(core.chat_list_width(), Some(CHAT_LIST_MAX_WIDTH));
+        let config = page_config_of(&effects);
+        assert_eq!(config.chat_list_width, Some(CHAT_LIST_MAX_WIDTH));
+        assert_eq!(config.chat_list_min, CHAT_LIST_MIN_WIDTH);
+        assert_eq!(config.chat_list_max, CHAT_LIST_MAX_WIDTH);
         assert_eq!(saved(&effects)["chat_list_width"], CHAT_LIST_MAX_WIDTH);
         core.handle(Event::ChatListResized { width: Some(1.0) });
         assert_eq!(core.chat_list_width(), Some(CHAT_LIST_MIN_WIDTH));
@@ -1418,6 +1378,15 @@ mod tests {
         let effects = core.handle(Event::ChatListResized { width: None });
         assert_eq!(core.chat_list_width(), None);
         assert!(saved(&effects)["chat_list_width"].is_null());
+    }
+
+    #[test]
+    fn page_load_sends_the_config_to_that_account_only() {
+        let mut core = started(TWO);
+        core.handle(Event::ZoomChanged { factor: 1.4 });
+        let effects = core.handle(Event::PageLoaded { id: "a".into() });
+        assert!(matches!(&effects[0], Effect::ApplyPageConfig {
+            target: PageTarget::Account(id), config } if id == "a" && config.zoom == 1.4));
     }
 
     #[test]
@@ -1820,40 +1789,38 @@ mod tests {
         })
     }
 
-    fn zoom(core: &mut Core, factor: f64) -> Vec<Effect> {
-        core.handle(Event::ZoomChanged { factor })
+    /// The config of the one `ApplyPageConfig` that targets every account.
+    fn page_config_of(effects: &[Effect]) -> PageConfig {
+        let mut found = effects.iter().filter_map(|e| match e {
+            Effect::ApplyPageConfig {
+                target: PageTarget::All,
+                config,
+            } => Some(config.clone()),
+            _ => None,
+        });
+        let config = found.next().expect("ApplyPageConfig for all accounts");
+        assert!(found.next().is_none(), "one ApplyPageConfig only");
+        config
     }
 
-    #[test]
-    fn theme_css_covers_each_theme() {
-        let dark = theme_css("dark");
-        assert!(dark.contains("#1e1e1e"), "dark theme must set its base bg");
-        assert!(
-            dark.contains("chatlist-header"),
-            "dark adds WhatsApp overrides"
-        );
-
-        let light = theme_css("light");
-        assert!(
-            light.contains("#ffffff"),
-            "light theme must set its base bg"
-        );
-        assert!(
-            !light.contains("#1e1e1e"),
-            "light must not leak dark colors"
-        );
-
-        // "system" (and anything unrecognised) means "inject nothing".
-        assert!(theme_css("system").is_empty());
-        assert!(theme_css("").is_empty());
+    fn zoom(core: &mut Core, factor: f64) -> Vec<Effect> {
+        core.handle(Event::ZoomChanged { factor })
     }
 
     #[test]
     fn theme_change_applies_and_saves() {
         let mut core = loaded_core();
         let effects = theme(&mut core, "dark");
-        assert!(matches!(&effects[0], Effect::ApplyTheme { theme, css }
-            if theme == "dark" && css.contains("#1e1e1e")));
+        assert_eq!(
+            effects[0],
+            Effect::SetWindowScheme {
+                theme: "dark".into()
+            }
+        );
+        assert!(
+            matches!(&effects[1], Effect::ApplyPageConfig { target: PageTarget::All, config }
+            if config.theme_css.contains("#1e1e1e"))
+        );
         assert_eq!(saved(&effects)["theme"], "dark");
     }
 
@@ -1861,13 +1828,8 @@ mod tests {
     fn system_theme_applies_empty_css() {
         let mut core = loaded_core();
         theme(&mut core, "dark");
-        assert_eq!(
-            theme(&mut core, "system")[0],
-            Effect::ApplyTheme {
-                theme: "system".into(),
-                css: String::new()
-            }
-        );
+        assert!(matches!(&theme(&mut core, "system")[1],
+            Effect::ApplyPageConfig { config, .. } if config.theme_css.is_empty()));
     }
 
     #[test]
@@ -1882,15 +1844,15 @@ mod tests {
     fn zoom_change_applies_and_saves() {
         let mut core = loaded_core();
         let effects = zoom(&mut core, 1.5);
-        assert_eq!(effects[0], Effect::ApplyZoom { factor: 1.5 });
+        assert_eq!(page_config_of(&effects).zoom, 1.5);
         assert_eq!(saved(&effects)["zoom_factor"], 1.5);
     }
 
     #[test]
     fn zoom_is_clamped() {
         let mut core = loaded_core();
-        assert_eq!(zoom(&mut core, 9.0)[0], Effect::ApplyZoom { factor: 3.0 });
-        assert_eq!(zoom(&mut core, 0.0)[0], Effect::ApplyZoom { factor: 0.25 });
+        assert_eq!(page_config_of(&zoom(&mut core, 9.0)).zoom, 3.0);
+        assert_eq!(page_config_of(&zoom(&mut core, 0.0)).zoom, 0.25);
     }
 
     #[test]
@@ -1920,7 +1882,7 @@ mod tests {
             fresh_id: "u1".into(),
         });
         let effects = theme(&mut core, "dark");
-        assert!(matches!(effects[0], Effect::ApplyTheme { .. }));
+        assert!(matches!(effects[0], Effect::SetWindowScheme { .. }));
         assert!(!has_save(&effects));
         assert!(!has_save(&zoom(&mut core, 2.0)));
     }
@@ -1939,8 +1901,13 @@ mod tests {
             fresh_id: "u1".into(),
         });
         let effects = core.appearance_effects();
-        assert!(matches!(&effects[0], Effect::ApplyTheme { theme, .. } if theme == "light"));
-        assert_eq!(effects[1], Effect::ApplyZoom { factor: 1.2 });
+        assert_eq!(
+            effects[0],
+            Effect::SetWindowScheme {
+                theme: "light".into()
+            }
+        );
+        assert_eq!(page_config_of(&effects).zoom, 1.2);
     }
 
     // --- message notifications ---
@@ -2301,7 +2268,9 @@ mod tests {
     #[test]
     fn spellcheck_change_is_saved() {
         let mut core = started(TWO);
-        let out = saved(&core.handle(Event::SpellcheckChanged { enabled: false }));
+        let effects = core.handle(Event::SpellcheckChanged { enabled: false });
+        assert!(!page_config_of(&effects).spellcheck);
+        let out = saved(&effects);
         assert_eq!(out["spellcheck_enabled"], false);
         assert!(!core.spellcheck_enabled());
     }
@@ -2920,7 +2889,7 @@ mod tests {
         };
         let attempt = *attempt;
         let effects = core.handle(Event::PageLoaded { id: "a".into() });
-        assert_eq!(effects, [Effect::HideLoadError { id: "a".into() }]);
+        assert!(effects.contains(&Effect::HideLoadError { id: "a".into() }));
         assert!(core
             .handle(Event::RetryDue {
                 id: "a".into(),

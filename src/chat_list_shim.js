@@ -3,13 +3,12 @@
   // Lets the user drag the right edge of WhatsApp's chat list (#side) to resize it. A double
   // click on the edge gives back WhatsApp's own width.
   // WhatsApp can change its page at any time. When #side is missing, this does nothing.
-  // Keep equal to CHAT_LIST_MIN_WIDTH and CHAT_LIST_MAX_WIDTH in core.rs.
-  var MIN = 200;
-  var MAX = 900;
+  // The limits come from the page config. null width means WhatsApp's own width.
+  var MIN;
+  var MAX;
   var HANDLE = "data-pairline-resize";
   var COLUMN = "data-pairline-column";
-  // Set by the Rust side before this script runs. null means WhatsApp's own width.
-  var width = window.__PAIRLINE_CHAT_LIST_WIDTH__;
+  var width = null;
 
   // The outermost box that is as wide as the chat list: WhatsApp sizes that box.
   function pane() {
@@ -102,11 +101,12 @@
     p.appendChild(handle);
   }
 
-  // The Rust side calls this when the width changes in another account.
-  window.__pairlineSetChatListWidth = function (w) {
-    width = w;
+  window.__pairlineOnConfig(function (config) {
+    MIN = config.chat_list_min;
+    MAX = config.chat_list_max;
+    width = config.chat_list_width;
     attach();
-  };
+  });
   // WhatsApp builds and rebuilds its page after load, so look again every second.
   setInterval(attach, 1000);
 })();
