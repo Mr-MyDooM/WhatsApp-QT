@@ -3,8 +3,7 @@
   // Turns spellcheck off in WhatsApp's text boxes when the user switches it off in Settings.
   // Marked with MARK so switching it on again clears only what this script set.
   var MARK = "data-pairline-spellcheck";
-  // Set by the Rust side before this script runs.
-  var enabled = window.__PAIRLINE_SPELLCHECK__ !== false;
+  var enabled = true;
 
   function apply() {
     if (enabled) {
@@ -21,11 +20,10 @@
     });
   }
 
-  // The Rust side calls this when the user changes the setting.
-  window.__pairlineSetSpellcheck = function (on) {
-    enabled = on;
+  window.__pairlineOnConfig(function (config) {
+    enabled = config.spellcheck;
     apply();
-  };
+  });
   // WhatsApp makes new text boxes as the user moves between chats, so look again every second.
   setInterval(apply, 1000);
 })();
