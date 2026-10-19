@@ -834,10 +834,6 @@ impl Core {
         }
     }
 
-    pub fn autostart_enabled(&self) -> bool {
-        self.settings.autostart_enabled
-    }
-
     /// Where the page starts and how wide the sidebar webview is.
     pub fn layout(&self) -> (f64, f64) {
         let full = if self.settings.sidebar_wide {
@@ -2803,7 +2799,7 @@ mod tests {
         core.handle(Event::AutostartChanged { enabled: true });
         let effects = core.handle(Event::AutostartFailed { enabled: false });
         assert_eq!(saved(&effects)["autostart_enabled"], false);
-        assert!(!core.autostart_enabled());
+        assert!(!core.settings_view(0).autostart_enabled);
     }
 
     #[test]
@@ -3192,6 +3188,7 @@ mod tests {
         core.handle(Event::SettingsLoaded {
             raw: Ok(Some("{not json".into())),
             fresh_id: "n".into(),
+            debug_build: false,
         });
         assert!(core.settings_view(0).load_error.is_some());
     }
