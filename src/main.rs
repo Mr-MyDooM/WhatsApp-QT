@@ -1509,7 +1509,7 @@ fn on_menu_event(app: &AppHandle, id: &str) {
         MENU_NOTIFICATIONS => dispatch(app, Event::NotificationsToggled),
         MENU_ZOOM_IN => dispatch(app, Event::ZoomStepped { delta: ZOOM_STEP }),
         MENU_ZOOM_OUT => dispatch(app, Event::ZoomStepped { delta: -ZOOM_STEP }),
-        MENU_ZOOM_RESET => dispatch(app, Event::ZoomChanged { factor: 1.0 }),
+        MENU_ZOOM_RESET => dispatch(app, Event::SettingChanged(core::SettingChange::Zoom(1.0))),
         MENU_NEXT => dispatch(app, Event::SwitchRelative(1)),
         MENU_PREVIOUS => dispatch(app, Event::SwitchRelative(-1)),
         _ if id.starts_with(MENU_CTX_RENAME) => open_rename(app, &id[MENU_CTX_RENAME.len()..]),

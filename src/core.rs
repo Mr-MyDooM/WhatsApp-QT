@@ -264,13 +264,6 @@ pub enum Event {
     SidebarReady,
     /// The settings window changed one setting.
     SettingChanged(SettingChange),
-    ThemeChanged {
-        theme: String,
-    },
-    /// Absolute zoom level, clamped to `MIN_ZOOM..=MAX_ZOOM`.
-    ZoomChanged {
-        factor: f64,
-    },
     /// Relative zoom, for the keyboard shortcuts.
     ZoomStepped {
         delta: f64,
@@ -292,22 +285,10 @@ pub enum Event {
     NotificationClicked {
         account_id: String,
     },
-    NotificationSettingsChanged {
-        messages: bool,
-        show_sender: bool,
-        sound_enabled: bool,
-        sound_path: String,
-    },
     /// The shortcut: message notifications on or off.
     NotificationsToggled,
-    AutostartChanged {
-        enabled: bool,
-    },
-    /// The system refused an `AutostartChanged`. `enabled` is the state that still holds.
+    /// The system refused to change the login item. `enabled` is the state that still holds.
     AutostartFailed {
-        enabled: bool,
-    },
-    ClearCacheOnExitChanged {
         enabled: bool,
     },
     /// The user asked to quit. Runs before the app exits.
@@ -318,18 +299,9 @@ pub enum Event {
     ToggleWindow {
         window_visible: bool,
     },
-    CloseToTrayChanged {
-        enabled: bool,
-    },
-    StartMinimizedChanged {
-        enabled: bool,
-    },
     /// Toggle button or View menu item: go from the avatar column to the wide sidebar, to
     /// auto-hide, and back to the avatar column.
     SidebarToggled,
-    SidebarAutoHideChanged {
-        enabled: bool,
-    },
     /// The mouse entered or left the auto-hidden sidebar. Ignored unless auto-hide is on.
     SidebarRevealed {
         shown: bool,
@@ -338,13 +310,6 @@ pub enum Event {
     /// The value comes from the remote page, so it is checked here.
     ChatListResized {
         width: Option<f64>,
-    },
-    /// Folder for downloads. Empty means the system Downloads folder. A relative path is refused.
-    DownloadPathChanged {
-        path: String,
-    },
-    SpellcheckChanged {
-        enabled: bool,
     },
     /// Snooze message notifications for all accounts. `now` is Unix seconds.
     SnoozeSet {
@@ -593,8 +558,6 @@ impl Core {
                 vec![view, self.sidebar_state_effect()]
             }
             Event::SettingChanged(change) => self.apply_change(change),
-            Event::ThemeChanged { theme } => self.set_theme(theme),
-            Event::ZoomChanged { factor } => self.set_zoom(factor),
             Event::ZoomStepped { delta } => self.set_zoom(self.settings.zoom_factor + delta),
             Event::NotificationRequested {
                 account_id,
@@ -611,49 +574,13 @@ impl Core {
                 effects.extend(self.switch(&account_id));
                 effects
             }
-            Event::NotificationSettingsChanged {
-                messages,
-                show_sender,
-                sound_enabled,
-                sound_path,
-            } => {
-                if sound_path.chars().count() > MAX_SOUND_PATH_CHARS {
-                    return vec![Effect::ReportError {
-                        message: "Sound file path is too long".into(),
-                    }];
-                }
-                let n = &mut self.settings.notification_settings;
-                n.show_message_notifications = messages;
-                n.show_sender = show_sender;
-                n.sound_enabled = sound_enabled;
-                n.sound_path = sound_path;
-                self.saved_effects()
-            }
             Event::NotificationsToggled => {
                 let n = &mut self.settings.notification_settings;
                 n.show_message_notifications = !n.show_message_notifications;
                 self.saved_effects()
             }
-            // The OS login item must not drift from a settings file we cannot write.
-            Event::AutostartChanged { .. } if self.save_blocked => vec![Effect::ReportError {
-                message: "Cannot change start at login while the settings file is unusable".into(),
-            }],
-            Event::AutostartChanged { enabled } => {
-                self.settings.autostart_enabled = enabled;
-                let mut effects = Vec::new();
-                self.save(&mut effects);
-                // Last: if the system refuses, the revert save must come after this one.
-                effects.push(Effect::SetAutostart { enabled });
-                effects
-            }
             Event::AutostartFailed { enabled } => {
                 self.settings.autostart_enabled = enabled;
-                let mut effects = Vec::new();
-                self.save(&mut effects);
-                effects
-            }
-            Event::ClearCacheOnExitChanged { enabled } => {
-                self.settings.clear_cache_on_exit = enabled;
                 let mut effects = Vec::new();
                 self.save(&mut effects);
                 effects
@@ -679,14 +606,6 @@ impl Core {
             } else {
                 Effect::ShowWindow
             }],
-            Event::CloseToTrayChanged { enabled } => {
-                self.settings.close_to_tray = enabled;
-                self.saved_effects()
-            }
-            Event::StartMinimizedChanged { enabled } => {
-                self.settings.start_minimized = enabled;
-                self.saved_effects()
-            }
             Event::SidebarToggled => {
                 let s = &mut self.settings;
                 (s.sidebar_wide, s.sidebar_auto_hide) = match (s.sidebar_wide, s.sidebar_auto_hide)
@@ -695,13 +614,6 @@ impl Core {
                     (false, false) => (true, false),
                     (true, false) => (false, true),
                 };
-                self.sidebar_revealed = false;
-                let mut effects = vec![self.layout_effect(), self.sidebar_state_effect()];
-                self.save(&mut effects);
-                effects
-            }
-            Event::SidebarAutoHideChanged { enabled } => {
-                self.settings.sidebar_auto_hide = enabled;
                 self.sidebar_revealed = false;
                 let mut effects = vec![self.layout_effect(), self.sidebar_state_effect()];
                 self.save(&mut effects);
@@ -720,26 +632,6 @@ impl Core {
                 }
                 self.settings.chat_list_width =
                     width.map(|w| w.clamp(CHAT_LIST_MIN_WIDTH, CHAT_LIST_MAX_WIDTH));
-                let mut effects = vec![self.apply_page_config(PageTarget::All)];
-                self.save(&mut effects);
-                effects
-            }
-            Event::DownloadPathChanged { path } => {
-                if path.chars().count() > MAX_DOWNLOAD_PATH_CHARS {
-                    return vec![Effect::ReportError {
-                        message: "Download folder path is too long".into(),
-                    }];
-                }
-                if !path.is_empty() && !std::path::Path::new(&path).is_absolute() {
-                    return vec![Effect::ReportError {
-                        message: "Download folder must be a full path".into(),
-                    }];
-                }
-                self.settings.download_path = path;
-                self.saved_effects()
-            }
-            Event::SpellcheckChanged { enabled } => {
-                self.settings.spellcheck_enabled = enabled;
                 let mut effects = vec![self.apply_page_config(PageTarget::All)];
                 self.save(&mut effects);
                 effects
@@ -929,35 +821,88 @@ impl Core {
     }
 
     fn apply_change(&mut self, change: SettingChange) -> Vec<Effect> {
-        let n = &self.settings.notification_settings;
-        let (messages, show_sender, sound_enabled) =
-            (n.show_message_notifications, n.show_sender, n.sound_enabled);
-        let sound_path = n.sound_path.clone();
-        let notifications =
-            |messages, show_sender, sound_enabled, sound_path| Event::NotificationSettingsChanged {
-                messages,
-                show_sender,
-                sound_enabled,
-                sound_path,
-            };
-        let event = match change {
-            SettingChange::Theme(theme) => Event::ThemeChanged { theme },
-            SettingChange::Zoom(factor) => Event::ZoomChanged { factor },
-            SettingChange::Autostart(enabled) => Event::AutostartChanged { enabled },
-            SettingChange::StartMinimized(enabled) => Event::StartMinimizedChanged { enabled },
-            SettingChange::CloseToTray(enabled) => Event::CloseToTrayChanged { enabled },
-            SettingChange::SidebarAutoHide(enabled) => Event::SidebarAutoHideChanged { enabled },
-            SettingChange::ClearCacheOnExit(enabled) => Event::ClearCacheOnExitChanged { enabled },
-            SettingChange::Spellcheck(enabled) => Event::SpellcheckChanged { enabled },
-            SettingChange::DownloadPath(path) => Event::DownloadPathChanged { path },
-            SettingChange::ShowMessages(v) => {
-                notifications(v, show_sender, sound_enabled, sound_path)
+        match change {
+            SettingChange::Theme(theme) => self.set_theme(theme),
+            SettingChange::Zoom(factor) => self.set_zoom(factor),
+            // The OS login item must not drift from a settings file we cannot write.
+            SettingChange::Autostart(_) if self.save_blocked => vec![Effect::ReportError {
+                message: "Cannot change start at login while the settings file is unusable".into(),
+            }],
+            SettingChange::Autostart(enabled) => {
+                self.settings.autostart_enabled = enabled;
+                let mut effects = Vec::new();
+                self.save(&mut effects);
+                // Last: if the system refuses, the revert save must come after this one.
+                effects.push(Effect::SetAutostart { enabled });
+                effects
             }
-            SettingChange::ShowSender(v) => notifications(messages, v, sound_enabled, sound_path),
-            SettingChange::SoundEnabled(v) => notifications(messages, show_sender, v, sound_path),
-            SettingChange::SoundPath(v) => notifications(messages, show_sender, sound_enabled, v),
-        };
-        self.handle(event)
+            SettingChange::StartMinimized(enabled) => {
+                self.settings.start_minimized = enabled;
+                self.saved_effects()
+            }
+            SettingChange::CloseToTray(enabled) => {
+                self.settings.close_to_tray = enabled;
+                self.saved_effects()
+            }
+            SettingChange::SidebarAutoHide(enabled) => {
+                self.settings.sidebar_auto_hide = enabled;
+                self.sidebar_revealed = false;
+                let mut effects = vec![self.layout_effect(), self.sidebar_state_effect()];
+                self.save(&mut effects);
+                effects
+            }
+            SettingChange::ClearCacheOnExit(enabled) => {
+                self.settings.clear_cache_on_exit = enabled;
+                self.saved_effects()
+            }
+            SettingChange::Spellcheck(enabled) => {
+                self.settings.spellcheck_enabled = enabled;
+                let mut effects = vec![self.apply_page_config(PageTarget::All)];
+                self.save(&mut effects);
+                effects
+            }
+            SettingChange::DownloadPath(path) => self.set_download_path(path),
+            SettingChange::ShowMessages(v) => {
+                let n = &mut self.settings.notification_settings;
+                n.show_message_notifications = v;
+                self.saved_effects()
+            }
+            SettingChange::ShowSender(v) => {
+                let n = &mut self.settings.notification_settings;
+                n.show_sender = v;
+                self.saved_effects()
+            }
+            SettingChange::SoundEnabled(v) => {
+                let n = &mut self.settings.notification_settings;
+                n.sound_enabled = v;
+                self.saved_effects()
+            }
+            SettingChange::SoundPath(path) => {
+                if path.chars().count() > MAX_SOUND_PATH_CHARS {
+                    return vec![Effect::ReportError {
+                        message: "Sound file path is too long".into(),
+                    }];
+                }
+                self.settings.notification_settings.sound_path = path;
+                self.saved_effects()
+            }
+        }
+    }
+
+    /// Empty means the system Downloads folder. A relative path is refused.
+    fn set_download_path(&mut self, path: String) -> Vec<Effect> {
+        if path.chars().count() > MAX_DOWNLOAD_PATH_CHARS {
+            return vec![Effect::ReportError {
+                message: "Download folder path is too long".into(),
+            }];
+        }
+        if !path.is_empty() && !std::path::Path::new(&path).is_absolute() {
+            return vec![Effect::ReportError {
+                message: "Download folder must be a full path".into(),
+            }];
+        }
+        self.settings.download_path = path;
+        self.saved_effects()
     }
 
     fn saved_effects(&self) -> Vec<Effect> {
@@ -1010,6 +955,7 @@ impl Core {
         effects
     }
 
+    /// Absolute zoom level, clamped to `MIN_ZOOM..=MAX_ZOOM`.
     fn set_zoom(&mut self, factor: f64) -> Vec<Effect> {
         if !factor.is_finite() {
             return vec![Effect::ReportError {
@@ -1546,7 +1492,7 @@ mod tests {
     #[test]
     fn auto_hide_layout_follows_the_reveal_state() {
         let mut core = core_with_sidebar(true, false);
-        let effects = core.handle(Event::SidebarAutoHideChanged { enabled: true });
+        let effects = core.handle(Event::SettingChanged(SettingChange::SidebarAutoHide(true)));
         assert_eq!(layout_of(&effects), (6.0, 6.0));
         let effects = core.handle(Event::SidebarRevealed { shown: true });
         assert_eq!(layout_of(&effects), (6.0, 220.0));
@@ -1568,7 +1514,7 @@ mod tests {
     fn a_width_change_hides_a_revealed_sidebar() {
         let mut core = core_with_sidebar(false, true);
         core.handle(Event::SidebarRevealed { shown: true });
-        let effects = core.handle(Event::SidebarAutoHideChanged { enabled: true });
+        let effects = core.handle(Event::SettingChanged(SettingChange::SidebarAutoHide(true)));
         assert_eq!(layout_of(&effects), (6.0, 6.0));
     }
 
@@ -1601,7 +1547,7 @@ mod tests {
             fresh_id: "u1".into(),
             debug_build: false,
         });
-        let effects = core.handle(Event::SidebarAutoHideChanged { enabled: true });
+        let effects = core.handle(Event::SettingChanged(SettingChange::SidebarAutoHide(true)));
         assert!(core.settings.sidebar_wide && core.settings.sidebar_auto_hide);
         assert_eq!(effects[1], core.sidebar_state_effect());
         assert_eq!(saved(&effects)["sidebar_auto_hide"], true);
@@ -1648,7 +1594,7 @@ mod tests {
     #[test]
     fn page_load_sends_the_config_to_that_account_only() {
         let mut core = started(TWO);
-        core.handle(Event::ZoomChanged { factor: 1.4 });
+        core.handle(Event::SettingChanged(SettingChange::Zoom(1.4)));
         let effects = core.handle(Event::PageLoaded { id: "a".into() });
         assert!(matches!(&effects[0], Effect::ApplyPageConfig {
             target: PageTarget::Account(id), config } if id == "a" && config.zoom == 1.4));
@@ -2044,10 +1990,26 @@ mod tests {
         core
     }
 
+    /// Apply the four notification settings, one `SettingChanged` each. Returns the last effects.
+    fn set_notifications(
+        core: &mut Core,
+        messages: bool,
+        show_sender: bool,
+        sound_enabled: bool,
+        sound_path: String,
+    ) -> Vec<Effect> {
+        core.handle(Event::SettingChanged(SettingChange::ShowMessages(messages)));
+        core.handle(Event::SettingChanged(SettingChange::ShowSender(
+            show_sender,
+        )));
+        core.handle(Event::SettingChanged(SettingChange::SoundEnabled(
+            sound_enabled,
+        )));
+        core.handle(Event::SettingChanged(SettingChange::SoundPath(sound_path)))
+    }
+
     fn theme(core: &mut Core, theme: &str) -> Vec<Effect> {
-        core.handle(Event::ThemeChanged {
-            theme: theme.into(),
-        })
+        core.handle(Event::SettingChanged(SettingChange::Theme(theme.into())))
     }
 
     /// The config of the one `ApplyPageConfig` that targets every account.
@@ -2065,7 +2027,7 @@ mod tests {
     }
 
     fn zoom(core: &mut Core, factor: f64) -> Vec<Effect> {
-        core.handle(Event::ZoomChanged { factor })
+        core.handle(Event::SettingChanged(SettingChange::Zoom(factor)))
     }
 
     #[test]
@@ -2202,12 +2164,7 @@ mod tests {
     #[test]
     fn hidden_sender_hides_sender_and_text() {
         let mut core = started(TWO);
-        core.handle(Event::NotificationSettingsChanged {
-            messages: true,
-            show_sender: false,
-            sound_enabled: true,
-            sound_path: String::new(),
-        });
+        set_notifications(&mut core, true, false, true, String::new());
         let effects = notify(&mut core, "a", "Alice", "secret");
         let (title, body, _) = shown(&effects).unwrap();
         assert_eq!((title, body), ("Account 1", "New message"));
@@ -2244,7 +2201,7 @@ mod tests {
     fn close_hides_to_tray_when_enabled_and_quits_when_not() {
         let mut core = loaded_core();
         assert_eq!(core.handle(Event::CloseRequested), vec![Effect::Quit]);
-        core.handle(Event::CloseToTrayChanged { enabled: true });
+        core.handle(Event::SettingChanged(SettingChange::CloseToTray(true)));
         assert_eq!(core.handle(Event::CloseRequested), vec![Effect::HideWindow]);
     }
 
@@ -2278,12 +2235,7 @@ mod tests {
     fn sound_follows_settings() {
         let mut core = started(TWO);
         let change = |core: &mut Core, on: bool, path: &str| {
-            core.handle(Event::NotificationSettingsChanged {
-                messages: true,
-                show_sender: true,
-                sound_enabled: on,
-                sound_path: path.into(),
-            });
+            set_notifications(core, true, true, on, path.into());
             notify(core, "a", "A", "b")
         };
         let e = change(&mut core, false, "/s.wav");
@@ -2308,12 +2260,7 @@ mod tests {
         assert_eq!(title, "Account 1");
         assert_eq!(body, "Test: This is a test notification.");
         assert_eq!(sound, &Sound::Default);
-        core.handle(Event::NotificationSettingsChanged {
-            messages: true,
-            show_sender: false,
-            sound_enabled: false,
-            sound_path: String::new(),
-        });
+        set_notifications(&mut core, true, false, false, String::new());
         let effects = test_notification(&mut core, 0);
         let (_, body, sound) = shown(&effects).unwrap();
         assert_eq!((body, sound), ("New message", &Sound::Off));
@@ -2456,12 +2403,7 @@ mod tests {
     #[test]
     fn notification_settings_change_is_saved() {
         let mut core = started(TWO);
-        let effects = core.handle(Event::NotificationSettingsChanged {
-            messages: false,
-            show_sender: false,
-            sound_enabled: false,
-            sound_path: "/s.wav".into(),
-        });
+        let effects = set_notifications(&mut core, false, false, false, "/s.wav".into());
         let out = saved(&effects);
         let n = &out["notification_settings"];
         assert_eq!(n["show_message_notifications"], false);
@@ -2485,13 +2427,12 @@ mod tests {
             debug_build: false,
         });
         assert!(!has_save(&blocked.handle(Event::NotificationsToggled)));
-        assert!(!has_save(&blocked.handle(
-            Event::NotificationSettingsChanged {
-                messages: true,
-                show_sender: true,
-                sound_enabled: true,
-                sound_path: String::new(),
-            }
+        assert!(!has_save(&set_notifications(
+            &mut blocked,
+            true,
+            true,
+            true,
+            String::new()
         )));
     }
 
@@ -2499,23 +2440,27 @@ mod tests {
     fn download_path_is_saved_and_bad_paths_are_rejected() {
         let mut core = started(TWO);
         assert_eq!(
-            saved(&core.handle(Event::DownloadPathChanged {
-                path: "/Volumes/Disk".into()
-            }))["download_path"],
+            saved(
+                &core.handle(Event::SettingChanged(SettingChange::DownloadPath(
+                    "/Volumes/Disk".into()
+                )))
+            )["download_path"],
             "/Volumes/Disk"
         );
         for path in [
             "relative/dir".to_string(),
             "/x".repeat(MAX_DOWNLOAD_PATH_CHARS),
         ] {
-            let effects = core.handle(Event::DownloadPathChanged { path });
+            let effects = core.handle(Event::SettingChanged(SettingChange::DownloadPath(path)));
             assert!(matches!(effects[..], [Effect::ReportError { .. }]));
         }
         assert_eq!(core.download_path(), "/Volumes/Disk");
         assert_eq!(
-            saved(&core.handle(Event::DownloadPathChanged {
-                path: String::new()
-            }))["download_path"],
+            saved(
+                &core.handle(Event::SettingChanged(SettingChange::DownloadPath(
+                    String::new()
+                )))
+            )["download_path"],
             ""
         );
     }
@@ -2523,7 +2468,7 @@ mod tests {
     #[test]
     fn spellcheck_change_is_saved() {
         let mut core = started(TWO);
-        let effects = core.handle(Event::SpellcheckChanged { enabled: false });
+        let effects = core.handle(Event::SettingChanged(SettingChange::Spellcheck(false)));
         assert!(!page_config_of(&effects).spellcheck);
         let out = saved(&effects);
         assert_eq!(out["spellcheck_enabled"], false);
@@ -2533,12 +2478,9 @@ mod tests {
     #[test]
     fn overlong_sound_path_is_rejected() {
         let mut core = started(TWO);
-        let effects = core.handle(Event::NotificationSettingsChanged {
-            messages: true,
-            show_sender: true,
-            sound_enabled: true,
-            sound_path: "x".repeat(MAX_SOUND_PATH_CHARS + 1),
-        });
+        let effects = core.handle(Event::SettingChanged(SettingChange::SoundPath(
+            "x".repeat(MAX_SOUND_PATH_CHARS + 1),
+        )));
         assert!(matches!(effects[..], [Effect::ReportError { .. }]));
     }
 
@@ -2605,9 +2547,9 @@ mod tests {
     #[test]
     fn window_settings_save_and_persist() {
         let mut core = loaded_core();
-        let effects = core.handle(Event::CloseToTrayChanged { enabled: true });
+        let effects = core.handle(Event::SettingChanged(SettingChange::CloseToTray(true)));
         assert_eq!(saved(&effects)["close_to_tray"], true);
-        let effects = core.handle(Event::StartMinimizedChanged { enabled: true });
+        let effects = core.handle(Event::SettingChanged(SettingChange::StartMinimized(true)));
         assert_eq!(saved(&effects)["start_minimized"], true);
         assert!(core.settings_view(0).close_to_tray && core.settings_view(0).start_minimized);
     }
@@ -2620,12 +2562,12 @@ mod tests {
             fresh_id: "u1".into(),
             debug_build: false,
         });
-        assert!(!has_save(
-            &core.handle(Event::CloseToTrayChanged { enabled: true })
-        ));
-        assert!(!has_save(
-            &core.handle(Event::StartMinimizedChanged { enabled: true })
-        ));
+        assert!(!has_save(&core.handle(Event::SettingChanged(
+            SettingChange::CloseToTray(true)
+        ))));
+        assert!(!has_save(&core.handle(Event::SettingChanged(
+            SettingChange::StartMinimized(true)
+        ))));
         assert!(core.settings_view(0).close_to_tray);
     }
 
@@ -2873,7 +2815,7 @@ mod tests {
     #[test]
     fn autostart_change_applies_and_saves() {
         let mut core = loaded_core();
-        let effects = core.handle(Event::AutostartChanged { enabled: true });
+        let effects = core.handle(Event::SettingChanged(SettingChange::Autostart(true)));
         assert_eq!(
             effects.last(),
             Some(&Effect::SetAutostart { enabled: true })
@@ -2884,7 +2826,7 @@ mod tests {
     #[test]
     fn failed_autostart_change_is_reverted_and_saved() {
         let mut core = loaded_core();
-        core.handle(Event::AutostartChanged { enabled: true });
+        core.handle(Event::SettingChanged(SettingChange::Autostart(true)));
         let effects = core.handle(Event::AutostartFailed { enabled: false });
         assert_eq!(saved(&effects)["autostart_enabled"], false);
         assert!(!core.settings_view(0).autostart_enabled);
@@ -2893,7 +2835,7 @@ mod tests {
     #[test]
     fn clear_cache_setting_is_saved() {
         let mut core = loaded_core();
-        let effects = core.handle(Event::ClearCacheOnExitChanged { enabled: true });
+        let effects = core.handle(Event::SettingChanged(SettingChange::ClearCacheOnExit(true)));
         assert_eq!(saved(&effects)["clear_cache_on_exit"], true);
         assert!(core.settings_view(0).clear_cache_on_exit);
     }
@@ -2901,7 +2843,7 @@ mod tests {
     #[test]
     fn quit_with_clear_cache_on_clears_every_account() {
         let mut core = started(TWO);
-        core.handle(Event::ClearCacheOnExitChanged { enabled: true });
+        core.handle(Event::SettingChanged(SettingChange::ClearCacheOnExit(true)));
         assert_eq!(
             core.handle(Event::QuitRequested),
             vec![Effect::ClearAccountCaches {
@@ -2924,16 +2866,16 @@ mod tests {
             fresh_id: "u1".into(),
             debug_build: false,
         });
-        let effects = core.handle(Event::AutostartChanged { enabled: true });
+        let effects = core.handle(Event::SettingChanged(SettingChange::Autostart(true)));
         assert!(!effects
             .iter()
             .any(|e| matches!(e, Effect::SetAutostart { .. })));
         assert!(!has_save(
             &core.handle(Event::AutostartFailed { enabled: false })
         ));
-        assert!(!has_save(
-            &core.handle(Event::ClearCacheOnExitChanged { enabled: true })
-        ));
+        assert!(!has_save(&core.handle(Event::SettingChanged(
+            SettingChange::ClearCacheOnExit(true)
+        ))));
     }
 
     // --- Review fixes ---
@@ -2954,7 +2896,7 @@ mod tests {
             debug_build: false,
         });
         assert!(core.settings_view(0).load_error.is_some());
-        let effects = core.handle(Event::AutostartChanged { enabled: true });
+        let effects = core.handle(Event::SettingChanged(SettingChange::Autostart(true)));
         assert!(!effects
             .iter()
             .any(|e| matches!(e, Effect::SetAutostart { .. })));
